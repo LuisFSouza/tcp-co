@@ -20,7 +20,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -type flow_key -type tcp_metrics bpf tcp_co.bpf.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 -type flow_key -type tcp_metrics bpf tcp_co.bpf.c
 
 type tcpEvent struct {
 	Key     bpfFlowKey
@@ -38,17 +38,34 @@ func main() {
 	}
 	defer objs.Close()
 
-	tp, err := link.Tracepoint("tcp", "tcp_probe", objs.HandleTcpProbe, nil)
+	linkProbe, err := link.Tracepoint("tcp", "tcp_probe", objs.HandleTcpProbe, nil)
 	if err != nil {
 		log.Fatalf("Falha ao anexar tracepoint tcp/tcp_probe: %v", err)
 	}
-	defer tp.Close()
+	defer linkProbe.Close()
 
-	tpState, err := link.Tracepoint("sock", "inet_sock_set_state", objs.HandleTcpStateChange, nil)
+	//2. Anexar tracepoint/sock/inet_sock_set_state
+	linkState, err := link.Tracepoint("sock", "inet_sock_set_state", objs.HandleTcpStateChange, nil)
 	if err != nil {
 		log.Fatalf("Falha ao anexar tracepoint sock/inet_sock_set_state: %v", err)
 	}
-	defer tpState.Close()
+	defer linkState.Close()
+
+	// 3. Anexar kprobe/tcp_set_ca_state
+	linkCa, err := link.Kprobe("tcp_set_ca_state", objs.TraceTcpSetCaState, nil)
+	if err != nil {
+		log.Fatalf("Falha ao anexar kprobe tcp_set_ca_state: %v", err)
+	}
+	defer linkCa.Close()
+
+	// 4. Anexar tracepoint/tcp/tcp_retransmit_skb
+	linkRetrans, err := link.Tracepoint("tcp", "tcp_retransmit_skb", objs.HandleTcpRetransmitSkb, nil)
+	if err != nil {
+		log.Fatalf("Falha ao anexar tracepoint tcp_retransmit_skb: %v", err)
+	}
+	defer linkRetrans.Close()
+
+	fmt.Println("✅ Hooks anexados: probe, 2x tracepoints, kprobe")
 
 	rd, err := ringbuf.NewReader(objs.TcpEvents)
 	if err != nil {
