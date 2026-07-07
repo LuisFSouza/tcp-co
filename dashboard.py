@@ -92,16 +92,11 @@ with tab1:
             
         st.subheader("1. Janela de Congestionamento (CWND) e SSThresh × Tempo")
         fig_cwnd, ax_cwnd = plt.subplots(figsize=(14, 4))
-        ax_cwnd.plot(plot_df["Tempo_ms"], plot_df["CWND"], marker="o", linewidth=2, markersize=5, label="CWND", color="#1f77b4")
+        ax_cwnd.plot(plot_df["Tempo_ms"], plot_df["CWND"], linewidth=2, label="CWND", color="#1f77b4")
         
         ssthresh_plot = plot_df.dropna(subset=["SSThresh"])
         if not ssthresh_plot.empty:
-            ax_cwnd.plot(ssthresh_plot["Tempo_ms"], ssthresh_plot["SSThresh"], marker="x", linewidth=2, markersize=6, color="#ff7f0e", label="SSThresh")
-            
-        retrans_diff = plot_df["Retransmissions"].diff().fillna(0)
-        perdas = plot_df[retrans_diff > 0]
-        if not perdas.empty:
-            ax_cwnd.scatter(perdas["Tempo_ms"], perdas["CWND"], s=90, color="red", label="Perda Detectada", zorder=5)
+            ax_cwnd.plot(ssthresh_plot["Tempo_ms"], ssthresh_plot["SSThresh"], linewidth=2, color="#ff7f0e", label="SSThresh")
             
         ax_cwnd.set_xlabel("Tempo (ms)")
         ax_cwnd.set_ylabel("Segmentos TCP")
@@ -127,7 +122,7 @@ with tab1:
         ax_retrans.legend()
         st.pyplot(fig_retrans)
         
-        st.dataframe(filtered[["Data_Hora", "TCP_State", "CWND", "SSThresh", "SRTT_us", "Retransmissions", "CA_State", "Algoritmo_CA"]])
+        st.dataframe(filtered.drop(columns=["Conexao", "Opcao_Comp"], errors="ignore"))
 
 # ---------------------------------------------------------
 # ABA 2: COMPARAÇÃO ENTRE ALGORITMOS

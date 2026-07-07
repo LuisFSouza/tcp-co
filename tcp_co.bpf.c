@@ -23,7 +23,7 @@ struct tcp_metrics {
     __u32 ssthresh;
     __u32 srtt;
     __u32 retransmissions;
-    __u32 duplicate_acks;
+    __u32 duplicate_acks __attribute__((aligned(4)));
     __u64 bytes_acked;
 
     __u32 packets_out;
@@ -109,14 +109,12 @@ static __always_inline void emit_tcp_event(struct flow_key *key, struct tcp_metr
     bpf_ringbuf_submit(event, 0);
 }
 
-SEC("tracepoint/tcp/tcp_probe")
-int handle_tcp_probe(struct trace_event_raw_tcp_probe *ctx)
+SEC("fexit/tcp_ack")
+int BPF_PROG(handle_tcp_ack_exit, struct sock *sk, struct sk_buff *skb, int flag, int ret)
 {
-    // No tcp_probe, a estrutura 'skaddr' guarda o endereço do socket de forma genérica
-    struct sock *sk = (struct sock *)ctx->skaddr;
     if (!sk) return 0;
     
-    // Filtra apenas tráfego IPv4
+    // Filtra apenas IPv4
     if (BPF_CORE_READ(sk, __sk_common.skc_family) != AF_INET) 
         return 0;
 
@@ -129,39 +127,34 @@ int handle_tcp_probe(struct trace_event_raw_tcp_probe *ctx)
     struct tcp_sock *tp = (struct tcp_sock *)sk;
     struct inet_connection_sock *icsk = (struct inet_connection_sock *)sk;
 
-    // Atualiza com os valores reais no exato momento da transmissão do pacote
     update_tcp_metrics(tp, sk, icsk, metrics);
-
     emit_tcp_event(&key, metrics);
 
     return 0;
 }
 
-// SEC("fexit/tcp_ack")
-// int BPF_PROG(handle_tcp_ack_exit, struct sock *sk, struct sk_buff *skb, int flag, int ret)
-// {
-//     if (!sk) return 0;
-    
-//     // Filtra apenas IPv4 para manter a paridade com seu código original
-//     if (BPF_CORE_READ(sk, __sk_common.skc_family) != AF_INET) 
-//         return 0;
+SEC("fentry/tcp_fastretrans_alert")
+int BPF_PROG(handle_fastretrans_alert, struct sock *sk, __u32 prior_snd_una,
+             int num_dupack, int *ack_flag, int *rexmit)
+{
+    if (!sk) return 0;
 
-//     struct flow_key key = {};
-//     extract_flow_key(sk, &key);
+    if (BPF_CORE_READ(sk, __sk_common.skc_family) != AF_INET)
+        return 0;
 
-//     struct tcp_metrics *metrics = get_or_create_metrics(&key);
-//     if (!metrics) return 0;
-    
-//     struct tcp_sock *tp = (struct tcp_sock *)sk;
-//     struct inet_connection_sock *icsk = (struct inet_connection_sock *)sk;
+    if (num_dupack <= 0)
+        return 0;
 
-//     // Atualiza tudo de uma vez com o estado fresco pós-ACK
-//     update_tcp_metrics(tp, sk, icsk, metrics);
+    struct flow_key key = {};
+    extract_flow_key(sk, &key);
 
-//     emit_tcp_event(&key, metrics);
+    struct tcp_metrics *metrics = get_or_create_metrics(&key);
+    if (!metrics) return 0;
 
-//     return 0;
-// }
+    __sync_fetch_and_add(&metrics->duplicate_acks, num_dupack);
+
+    return 0;
+}
 
 SEC("tracepoint/sock/inet_sock_set_state")
 int handle_tcp_state_change(struct trace_event_raw_inet_sock_set_state *ctx)

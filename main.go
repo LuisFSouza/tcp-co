@@ -33,16 +33,26 @@ func main() {
 	}
 
 	var objs bpfObjects
-	if err := loadBpfObjects(&objs, nil); err != nil {
-		log.Fatalf("Falha ao carregar objetos eBPF: %v", err)
-	}
-	defer objs.Close()
+    if err := loadBpfObjects(&objs, nil); err != nil {
+        log.Fatalf("Falha ao carregar objetos eBPF: %v", err)
+    }
+    defer objs.Close()
 
-	linkProbe, err := link.Tracepoint("tcp", "tcp_probe", objs.HandleTcpProbe, nil)
+    linkAck, err := link.AttachTracing(link.TracingOptions{
+        Program: objs.HandleTcpAckExit,
+    })
+    if err != nil {
+        log.Fatalf("Falha ao anexar fexit/tcp_ack: %v", err)
+    }
+    defer linkAck.Close()
+
+	linkFastretrans, err := link.AttachTracing(link.TracingOptions{
+		Program: objs.HandleFastretransAlert,
+	})
 	if err != nil {
-		log.Fatalf("Falha ao anexar tracepoint tcp/tcp_probe: %v", err)
+		log.Fatalf("Falha ao anexar fentry/tcp_fastretrans_alert: %v", err)
 	}
-	defer linkProbe.Close()
+	defer linkFastretrans.Close()
 
 	//2. Anexar tracepoint/sock/inet_sock_set_state
 	linkState, err := link.Tracepoint("sock", "inet_sock_set_state", objs.HandleTcpStateChange, nil)
@@ -65,7 +75,7 @@ func main() {
 	}
 	defer linkRetrans.Close()
 
-	fmt.Println("✅ Hooks anexados: probe, 2x tracepoints, kprobe")
+	fmt.Println("✅ Hooks anexados: fexit, 2x tracepoints, kprobe")
 
 	rd, err := ringbuf.NewReader(objs.TcpEvents)
 	if err != nil {
