@@ -27,24 +27,33 @@ type tcpEvent struct {
 	Metrics bpfTcpMetrics
 }
 
+// Estutura para guardar o último estado conhecido de cada conexão
+type tcpHistory struct {
+	lastCwnd           uint32
+	lastRetransmissions uint32
+}
+
+// Configuração do gatilho de variação da CWND (50%)
+const dropPercentage = 0.50
+
 func main() {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("Falha ao remover memlock rlimit: %v", err)
 	}
 
 	var objs bpfObjects
-    if err := loadBpfObjects(&objs, nil); err != nil {
-        log.Fatalf("Falha ao carregar objetos eBPF: %v", err)
-    }
-    defer objs.Close()
+	if err := loadBpfObjects(&objs, nil); err != nil {
+		log.Fatalf("Falha ao carregar objetos eBPF: %v", err)
+	}
+	defer objs.Close()
 
-    linkAck, err := link.AttachTracing(link.TracingOptions{
-        Program: objs.HandleTcpAckExit,
-    })
-    if err != nil {
-        log.Fatalf("Falha ao anexar fexit/tcp_ack: %v", err)
-    }
-    defer linkAck.Close()
+	linkAck, err := link.AttachTracing(link.TracingOptions{
+		Program: objs.HandleTcpAckExit,
+	})
+	if err != nil {
+		log.Fatalf("Falha ao anexar fexit/tcp_ack: %v", err)
+	}
+	defer linkAck.Close()
 
 	linkFastretrans, err := link.AttachTracing(link.TracingOptions{
 		Program: objs.HandleFastretransAlert,
@@ -134,6 +143,8 @@ func main() {
 		rd.Close()
 	}()
 
+	// Tabela em memória para monitorar as variações por conexão
+	historyMap := make(map[string]tcpHistory)
 	count := 0
 
 	for {
@@ -147,6 +158,38 @@ func main() {
 			log.Printf("Erro ao decodificar evento: %v", err)
 			continue
 		}
+
+		// Identificador único da conexão TCP
+		connKey := fmt.Sprintf("%s:%d -> %s:%d",
+			intToIP(event.Key.SrcIp).String(), event.Key.SrcPort,
+			intToIP(event.Key.DstIp).String(), event.Key.DstPort,
+		)
+
+		currentCwnd := event.Metrics.SndCwnd
+		currentRetrans := uint32(event.Metrics.Retransmissions)
+
+		// --- VERIFICAÇÃO DE QUEDA DE CWND COM AUMENTO DE RETRANSMISSÃO ---
+		if history, exists := historyMap[connKey]; exists {
+			// Se as retransmissões subiram E a cwnd atual diminuiu
+			if currentRetrans > history.lastRetransmissions && currentCwnd < history.lastCwnd {
+				// Calcula a porcentagem da queda
+				drop := float64(history.lastCwnd-currentCwnd) / float64(history.lastCwnd)
+
+				if drop >= dropPercentage {
+					fmt.Printf("\n[PRINT] ⚠️ Queda de CWND > 50%% com retransmissão detectada!\n")
+					fmt.Printf("        Conexão: %s\n", connKey)
+					fmt.Printf("        CWND: %d -> %d (Queda de %.2f%%)\n", history.lastCwnd, currentCwnd, drop*100)
+					fmt.Printf("        Retransmissões: %d -> %d\n\n", history.lastRetransmissions, currentRetrans)
+				}
+			}
+		}
+
+		// Atualiza o histórico para a próxima comparação
+		historyMap[connKey] = tcpHistory{
+			lastCwnd:            currentCwnd,
+			lastRetransmissions: currentRetrans,
+		}
+		// -----------------------------------------------------------------
 
 		row := eventToCSVRow(event, bootTime, loc)
 

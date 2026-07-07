@@ -43,12 +43,10 @@ df = df.dropna(subset=["Data_Hora"])
 # Remove registros onde as portas são inválidas/zeradas
 df = df[(df["Porta_Origem"] > 0) & (df["Porta_Destino"] > 0)].copy()
 
-# Cria o identificador único para cada fluxo físico ANTES de filtrar o estado
-df["Conexao"] = (
-    df["IP_Origem"].astype(str) + ":" + df["Porta_Origem"].astype(int).astype(str) +
-    " → " +
-    df["IP_Destino"].astype(str) + ":" + df["Porta_Destino"].astype(int).astype(str)
-)
+# Cria as colunas formatadas no padrão IP:porta e o identificador do fluxo
+df["Origem"] = df["IP_Origem"].astype(str) + ":" + df["Porta_Origem"].astype(int).astype(str)
+df["Destino"] = df["IP_Destino"].astype(str) + ":" + df["Porta_Destino"].astype(int).astype(str)
+df["Conexao"] = df["Origem"] + " → " + df["Destino"]
 
 # REQUISITO EXIGIDO: Filtragem estrita para considerar APENAS o estado ESTABLISHED nas análises
 df = df[df["TCP_State"] == "ESTABLISHED"].copy()
@@ -121,8 +119,46 @@ with tab1:
         ax_retrans.grid(True, alpha=0.3)
         ax_retrans.legend()
         st.pyplot(fig_retrans)
-        
-        st.dataframe(filtered.drop(columns=["Conexao", "Opcao_Comp"], errors="ignore"))
+
+        tabela = filtered.drop(columns=["Conexao", "Opcao_Comp"], errors="ignore").rename(
+            columns={
+                "Data_Hora": "Horario",
+                "CWND": "CWND",
+                "SSThresh": "SSThresh",
+                "SRTT_us": "RTT",
+                "Retransmissions": "Retransmissoes",
+                "Duplicate_ACKs": "DUP_Acks",
+                "Bytes_Acked": "Bytes_Reconhecidos",
+                "Packets_Out": "Pacotes_em_Transito",
+                "Retrans_Out": "Retransmissoes em Transito",
+                "Snd_Buffer": "Send Buffer",
+                "TCP_State": "TCP_State",
+                "CA_State": "CA_State",
+                "Algoritmo_CA": "CA_Algorithm",
+                "Origem": "Origem",
+                "Destino": "Destino",
+            }
+        )
+        ordem_colunas = [
+            "Horario",
+            "Origem",
+            "Destino",
+            "CWND",
+            "SSThresh",
+            "RTT",
+            "Retransmissoes",
+            "DUP_Acks",
+            "Bytes_Reconhecidos",
+            "Pacotes_em_Transito",
+            "Retransmissoes_em_Transito",
+            "Send Buffer",
+            "TCP_State",
+            "CA_State",
+            "CA_Algorithm",
+        ]
+        tabela = tabela[[col for col in ordem_colunas if col in tabela.columns]]
+
+        st.dataframe(tabela)
 
 # ---------------------------------------------------------
 # ABA 2: COMPARAÇÃO ENTRE ALGORITMOS
