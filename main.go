@@ -103,7 +103,7 @@ func main() {
 		"Data_Hora","IP_Origem", "IP_Destino", "Porta_Origem",
 		"Porta_Destino", "CWND", "SSThresh", "SRTT_us", "Retransmissions",
 		"Duplicate_ACKs", "Bytes_Acked", "Packets_Out", "Retrans_Out",
-		"Snd_Buffer", "TCP_State", "CA_State", "Algoritmo_CA"
+		"Snd_Buffer", "TCP_State", "CA_State", "Algoritmo_CA",
 	}
 
 	if err := writer.Write(headers); err != nil {
