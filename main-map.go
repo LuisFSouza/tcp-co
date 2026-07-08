@@ -1,0 +1,302 @@
+package main
+
+import (
+	"bufio"
+	"encoding/csv"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/rlimit"
+)
+
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 -type flow_key -type tcp_metrics bpf tcp_co.bpf.c
+
+type tcpHistory struct {
+	lastCwnd            uint32
+	lastRetransmissions uint32
+}
+
+const dropPercentage = 0.50
+const pollInterval = 100 * time.Millisecond
+
+func main() {
+	if err := rlimit.RemoveMemlock(); err != nil {
+		log.Fatalf("Falha ao remover memlock rlimit: %v", err)
+	}
+
+	var objs bpfObjects
+	if err := loadBpfObjects(&objs, nil); err != nil {
+		log.Fatalf("Falha ao carregar objetos eBPF: %v", err)
+	}
+	defer objs.Close()
+
+	linkAck, err := link.AttachTracing(link.TracingOptions{Program: objs.HandleTcpAckExit})
+	if err != nil {
+		log.Fatalf("Falha ao anexar fexit/tcp_ack: %v", err)
+	}
+	defer linkAck.Close()
+
+	linkFastretrans, err := link.AttachTracing(link.TracingOptions{Program: objs.HandleFastretransAlert})
+	if err != nil {
+		log.Fatalf("Falha ao anexar fentry/tcp_fastretrans_alert: %v", err)
+	}
+	defer linkFastretrans.Close()
+
+	linkState, err := link.Tracepoint("sock", "inet_sock_set_state", objs.HandleTcpStateChange, nil)
+	if err != nil {
+		log.Fatalf("Falha ao anexar tracepoint sock/inet_sock_set_state: %v", err)
+	}
+	defer linkState.Close()
+
+	linkCa, err := link.Kprobe("tcp_set_ca_state", objs.TraceTcpSetCaState, nil)
+	if err != nil {
+		log.Fatalf("Falha ao anexar kprobe tcp_set_ca_state: %v", err)
+	}
+	defer linkCa.Close()
+
+	linkRetrans, err := link.Tracepoint("tcp", "tcp_retransmit_skb", objs.HandleTcpRetransmitSkb, nil)
+	if err != nil {
+		log.Fatalf("Falha ao anexar tracepoint tcp_retransmit_skb: %v", err)
+	}
+	defer linkRetrans.Close()
+
+	linkProbe, err := link.Tracepoint("tcp", "tcp_probe", objs.HandleTcpProbe, nil)
+	if err != nil {
+		log.Fatalf("Falha ao anexar tracepoint tcp/tcp_probe: %v", err)
+	}
+	defer linkProbe.Close()
+
+	fmt.Println("Hooks anexados: fexit/tcp_ack, fentry/tcp_fastretrans_alert, tracepoint sock/inet_sock_set_state, kprobe tcp_set_ca_state, tracepoint tcp_retransmit_skb, tracepoint tcp/tcp_probe")
+
+	csvFile, err := os.Create("tcp_metrics.csv")
+	if err != nil {
+		log.Fatalf("Falha ao criar CSV: %v", err)
+	}
+	defer csvFile.Close()
+
+	writer := csv.NewWriter(csvFile)
+	defer writer.Flush()
+
+	headers := []string{
+		"Data_Hora", "IP_Origem", "IP_Destino", "Porta_Origem",
+		"Porta_Destino", "CWND", "SSThresh", "SRTT_us", "Retransmissions",
+		"Duplicate_ACKs", "Bytes_Acked", "Packets_Out", "Retrans_Out",
+		"Snd_Buffer", "TCP_State", "CA_State", "Algoritmo_CA",
+	}
+
+	if err := writer.Write(headers); err != nil {
+		log.Fatalf("Falha ao escrever cabeçalho: %v", err)
+	}
+	writer.Flush()
+
+	bootTime, err := getBootTime()
+	if err != nil {
+		log.Fatalf("Falha ao obter boot time: %v", err)
+	}
+
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		loc = time.Local
+	}
+
+	fmt.Println("📊 Gravando histórico em tcp_metrics.csv")
+	fmt.Println("Pressione Ctrl+C para encerrar.")
+
+	stopChan := make(chan os.Signal, 1)
+	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
+
+	historyMap := make(map[string]tcpHistory)
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	count := 0
+
+	for {
+		select {
+		case <-stopChan:
+			fmt.Println("\n💾 Finalizando tcp_metrics_map.csv...")
+			return
+		case <-ticker.C:
+			var key bpfFlowKey
+			var metrics bpfTcpMetrics
+
+			iterator := objs.TcpConnections.Iterate()
+
+			for iterator.Next(&key, &metrics) {
+				connKey := fmt.Sprintf("%s:%d -> %s:%d",
+					intToIP(key.SrcIp).String(), key.SrcPort,
+					intToIP(key.DstIp).String(), key.DstPort,
+				)
+
+				currentCwnd := metrics.SndCwnd
+				currentRetrans := uint32(metrics.Retransmissions)
+
+				if history, exists := historyMap[connKey]; exists {
+					if currentRetrans > history.lastRetransmissions && currentCwnd < history.lastCwnd {
+						drop := float64(history.lastCwnd-currentCwnd) / float64(history.lastCwnd)
+
+						if drop >= dropPercentage {
+							fmt.Printf("\n⚠️ Queda de CWND > 50%% com retransmissão!\n")
+							fmt.Printf("Conexão: %s\n", connKey)
+							fmt.Printf("CWND: %d -> %d (Queda de %.2f%%)\n", history.lastCwnd, currentCwnd, drop*100)
+							fmt.Printf("Retransmissões: %d -> %d\n\n", history.lastRetransmissions, currentRetrans)
+						}
+					}
+				}
+
+				historyMap[connKey] = tcpHistory{
+					lastCwnd:            currentCwnd,
+					lastRetransmissions: currentRetrans,
+				}
+
+				row := metricsToCSVRow(key, metrics, bootTime, loc)
+
+				if err := writer.Write(row); err != nil {
+					log.Printf("Erro ao escrever CSV: %v", err)
+					continue
+				}
+
+				count++
+			}
+
+			if err := iterator.Err(); err != nil {
+				log.Printf("Erro ao iterar mapa: %v", err)
+			}
+
+			writer.Flush()
+			if count > 0 {
+				fmt.Printf("[%s] %d registros lidos do mapa e gravados no CSV\n", time.Now().Format("15:04:05"), count)
+				count = 0
+			}
+		}
+	}
+}
+
+func metricsToCSVRow(key bpfFlowKey, metrics bpfTcpMetrics, bootTime time.Time, loc *time.Location) []string {
+	eventTime := bootTime.Add(time.Duration(metrics.TimestampNs)).In(loc)
+	dataHora := eventTime.Format("2006-01-02 15:04:05.000000000")
+
+	return []string{
+		dataHora,
+		intToIP(key.SrcIp).String(),
+		intToIP(key.DstIp).String(),
+		strconv.Itoa(int(key.SrcPort)),
+		strconv.Itoa(int(key.DstPort)),
+		strconv.FormatUint(uint64(metrics.SndCwnd), 10),
+		strconv.FormatUint(uint64(metrics.Ssthresh), 10),
+		strconv.FormatUint(uint64(metrics.Srtt), 10),
+		strconv.FormatUint(uint64(metrics.Retransmissions), 10),
+		strconv.FormatUint(uint64(metrics.DuplicateAcks), 10),
+		strconv.FormatUint(metrics.BytesAcked, 10),
+		strconv.FormatUint(uint64(metrics.PacketsOut), 10),
+		strconv.FormatUint(uint64(metrics.RetransOut), 10),
+		strconv.FormatUint(uint64(metrics.Sndbuf), 10),
+		parseTCPState(metrics.TcpState),
+		parseCAState(metrics.CaState),
+		parseCaName(metrics.CaName),
+	}
+}
+
+func getBootTime() (time.Time, error) {
+	file, err := os.Open("/proc/stat")
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "btime ") {
+			parts := strings.Fields(line)
+			if len(parts) != 2 {
+				return time.Time{}, fmt.Errorf("formato inválido de btime")
+			}
+			bootUnix, err := strconv.ParseInt(parts[1], 10, 64)
+			if err != nil {
+				return time.Time{}, err
+			}
+			return time.Unix(bootUnix, 0), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return time.Time{}, err
+	}
+	return time.Time{}, fmt.Errorf("btime não encontrado em /proc/stat")
+}
+
+func intToIP(nn uint32) net.IP {
+	ip := make(net.IP, 4)
+	ip[0] = byte(nn & 0xFF)
+	ip[1] = byte((nn >> 8) & 0xFF)
+	ip[2] = byte((nn >> 16) & 0xFF)
+	ip[3] = byte((nn >> 24) & 0xFF)
+	return ip
+}
+
+func parseCaName(caName [16]int8) string {
+	var buf []byte
+	for _, b := range caName {
+		if b == 0 {
+			break
+		}
+		buf = append(buf, byte(b))
+	}
+	return string(buf)
+}
+
+func parseTCPState(state uint8) string {
+	switch state {
+	case 1:
+		return "ESTABLISHED"
+	case 2:
+		return "SYN_SENT"
+	case 3:
+		return "SYN_RECV"
+	case 4:
+		return "FIN_WAIT1"
+	case 5:
+		return "FIN_WAIT2"
+	case 6:
+		return "TIME_WAIT"
+	case 7:
+		return "CLOSE"
+	case 8:
+		return "CLOSE_WAIT"
+	case 9:
+		return "LAST_ACK"
+	case 10:
+		return "LISTEN"
+	case 11:
+		return "CLOSING"
+	case 12:
+		return "NEW_SYN_RECV"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", state)
+	}
+}
+
+func parseCAState(state uint8) string {
+	switch state {
+	case 0:
+		return "Open"
+	case 1:
+		return "Disorder"
+	case 2:
+		return "CWR"
+	case 3:
+		return "Recovery"
+	case 4:
+		return "Loss"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", state)
+	}
+}
