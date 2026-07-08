@@ -22,6 +22,7 @@ import (
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 -type flow_key -type tcp_metrics bpf tcp_co.bpf.c
 
+// Estrutura para armazenar os eventos de TCP recebidos do eBPF
 type tcpEvent struct {
 	Key     bpfFlowKey
 	Metrics bpfTcpMetrics
@@ -33,7 +34,7 @@ type tcpHistory struct {
 	lastRetransmissions uint32
 }
 
-// Configuração do gatilho de variação da CWND (50%)
+// Limiar de notificação para queda de CWND com aumento de retransmissão (50%)
 const dropPercentage = 0.50
 
 func main() {
@@ -63,28 +64,25 @@ func main() {
 	}
 	defer linkFastretrans.Close()
 
-	//2. Anexar tracepoint/sock/inet_sock_set_state
 	linkState, err := link.Tracepoint("sock", "inet_sock_set_state", objs.HandleTcpStateChange, nil)
 	if err != nil {
 		log.Fatalf("Falha ao anexar tracepoint sock/inet_sock_set_state: %v", err)
 	}
 	defer linkState.Close()
 
-	// 3. Anexar kprobe/tcp_set_ca_state
 	linkCa, err := link.Kprobe("tcp_set_ca_state", objs.TraceTcpSetCaState, nil)
 	if err != nil {
 		log.Fatalf("Falha ao anexar kprobe tcp_set_ca_state: %v", err)
 	}
 	defer linkCa.Close()
 
-	// 4. Anexar tracepoint/tcp/tcp_retransmit_skb
 	linkRetrans, err := link.Tracepoint("tcp", "tcp_retransmit_skb", objs.HandleTcpRetransmitSkb, nil)
 	if err != nil {
 		log.Fatalf("Falha ao anexar tracepoint tcp_retransmit_skb: %v", err)
 	}
 	defer linkRetrans.Close()
 
-	fmt.Println("✅ Hooks anexados: fexit, 2x tracepoints, kprobe")
+	fmt.Println("Hooks anexados: fexit/tcp_ack, fentry/tcp_fastretrans_alert, tracepoint sock/inet_sock_set_state, kprobe tcp_set_ca_state, tracepoint tcp_retransmit_skb")
 
 	rd, err := ringbuf.NewReader(objs.TcpEvents)
 	if err != nil {
@@ -102,11 +100,10 @@ func main() {
 	defer writer.Flush()
 
 	headers := []string{
-		"Data_Hora",
-		"IP_Origem", "IP_Destino", "Porta_Origem", "Porta_Destino",
-		"CWND", "SSThresh", "SRTT_us", "Retransmissions", "Duplicate_ACKs",
-		"Bytes_Acked", "Packets_Out", "Retrans_Out", "Snd_Buffer",
-		"TCP_State", "CA_State", "Algoritmo_CA",
+		"Data_Hora","IP_Origem", "IP_Destino", "Porta_Origem",
+		"Porta_Destino", "CWND", "SSThresh", "SRTT_us", "Retransmissions",
+		"Duplicate_ACKs", "Bytes_Acked", "Packets_Out", "Retrans_Out",
+		"Snd_Buffer", "TCP_State", "CA_State", "Algoritmo_CA"
 	}
 
 	if err := writer.Write(headers); err != nil {
@@ -128,9 +125,6 @@ func main() {
 		loc = time.Local
 	}
 
-	fmt.Println("✅ Tracepoint anexado: tcp/tcp_probe")
-	fmt.Println("✅ Tracepoint anexado: sock/inet_sock_set_state")
-	fmt.Println("✅ Ringbuf ativo")
 	fmt.Println("📊 Gravando histórico em tcp_metrics.csv")
 	fmt.Println("Pressione Ctrl+C para encerrar.")
 
@@ -143,7 +137,7 @@ func main() {
 		rd.Close()
 	}()
 
-	// Tabela em memória para monitorar as variações por conexão
+	// Mapa para armazenar o último estado conhecido de cada conexão TCP
 	historyMap := make(map[string]tcpHistory)
 	count := 0
 
@@ -159,37 +153,37 @@ func main() {
 			continue
 		}
 
-		// Identificador único da conexão TCP
+		// ID da conexão TCP
 		connKey := fmt.Sprintf("%s:%d -> %s:%d",
 			intToIP(event.Key.SrcIp).String(), event.Key.SrcPort,
 			intToIP(event.Key.DstIp).String(), event.Key.DstPort,
 		)
 
+		// CWND e retransmissões no momento
 		currentCwnd := event.Metrics.SndCwnd
 		currentRetrans := uint32(event.Metrics.Retransmissions)
 
-		// --- VERIFICAÇÃO DE QUEDA DE CWND COM AUMENTO DE RETRANSMISSÃO ---
+		// Verificação de queda de CWND com aumento de retransmissões
 		if history, exists := historyMap[connKey]; exists {
-			// Se as retransmissões subiram E a cwnd atual diminuiu
+			// Se as retransmissões subiram e a cwnd atual diminuiu
 			if currentRetrans > history.lastRetransmissions && currentCwnd < history.lastCwnd {
-				// Calcula a porcentagem da queda
+				// Porcentagem da queda
 				drop := float64(history.lastCwnd-currentCwnd) / float64(history.lastCwnd)
 
 				if drop >= dropPercentage {
-					fmt.Printf("\n[PRINT] ⚠️ Queda de CWND > 50%% com retransmissão detectada!\n")
-					fmt.Printf("        Conexão: %s\n", connKey)
-					fmt.Printf("        CWND: %d -> %d (Queda de %.2f%%)\n", history.lastCwnd, currentCwnd, drop*100)
-					fmt.Printf("        Retransmissões: %d -> %d\n\n", history.lastRetransmissions, currentRetrans)
+					fmt.Printf("\n⚠️ Queda de CWND > 50%% com retransmissão!\n")
+					fmt.Printf("Conexão: %s\n", connKey)
+					fmt.Printf("CWND: %d -> %d (Queda de %.2f%%)\n", history.lastCwnd, currentCwnd, drop*100)
+					fmt.Printf("Retransmissões: %d -> %d\n\n", history.lastRetransmissions, currentRetrans)
 				}
 			}
 		}
 
-		// Atualiza o histórico para a próxima comparação
+		// Atualiza o mapa de histórico de conexão
 		historyMap[connKey] = tcpHistory{
 			lastCwnd:            currentCwnd,
 			lastRetransmissions: currentRetrans,
 		}
-		// -----------------------------------------------------------------
 
 		row := eventToCSVRow(event, bootTime, loc)
 
@@ -205,7 +199,7 @@ func main() {
 		}
 
 		count++
-		fmt.Printf("✅ amostra %d gravada\n", count)
+		fmt.Printf("Amostra %d gravada\n", count)
 	}
 
 	writer.Flush()
