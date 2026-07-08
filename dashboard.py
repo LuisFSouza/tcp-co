@@ -7,14 +7,12 @@ CSV_FILE = "tcp_metrics.csv"
 st.set_page_config(page_title="TCP-CO Dashboard", layout="wide")
 st.title("TCP-CO — TCP Congestion Observatory")
 
-# Carrega o arquivo
 try:
     df = pd.read_csv(CSV_FILE)
 except Exception as e:
     st.error(f"Erro ao ler o arquivo CSV: {e}")
     st.stop()
 
-# Colunas armazenadas
 required_columns = [
     "Data_Hora", "IP_Origem", "IP_Destino", "Porta_Origem", "Porta_Destino",
     "CWND", "SSThresh", "SRTT_us", "Retransmissions", "Duplicate_ACKs", 
@@ -27,91 +25,65 @@ if missing:
     st.error(f"Colunas ausentes no CSV: {missing}")
     st.stop()
 
-# Conversões e Tratamento de Dados
 df["Data_Hora"] = pd.to_datetime(df["Data_Hora"], format="%Y-%m-%d %H:%M:%S.%f", errors="coerce")
 
-numeric_cols = ["CWND", "SSThresh", "SRTT_us", "Retransmissions", "Porta_Origem", "Porta_Destino"]
+numeric_cols = [
+    "CWND", "SSThresh", "SRTT_us", "Retransmissions", "Duplicate_ACKs", "Bytes_Acked",
+    "Packets_Out", "Retrans_Out", "Snd_Buffer", "Porta_Origem", "Porta_Destino"
+]
 for col in numeric_cols:
     df[col] = pd.to_numeric(df[col], errors="coerce")
 
-# Trata valor inicial do SSThresh
-df.loc[df["SSThresh"] >= 1000000, "SSThresh"] = pd.NA
-
-# Limpa timestamps inválidos
+df.loc[df["SSThresh"] == 2147483647, "SSThresh"] = pd.NA
 df = df.dropna(subset=["Data_Hora"])
-
-# Remove registros onde as portas são inválidas/zeradas
 df = df[(df["Porta_Origem"] > 0) & (df["Porta_Destino"] > 0)].copy()
-
-# Cria as colunas formatadas no padrão IP:porta e o identificador do fluxo
 df["Origem"] = df["IP_Origem"].astype(str) + ":" + df["Porta_Origem"].astype(int).astype(str)
 df["Destino"] = df["IP_Destino"].astype(str) + ":" + df["Porta_Destino"].astype(int).astype(str)
 df["Conexao"] = df["Origem"] + " → " + df["Destino"]
-
-# REQUISITO EXIGIDO: Filtragem estrita para considerar APENAS o estado ESTABLISHED nas análises
 df = df[df["TCP_State"] == "ESTABLISHED"].copy()
-
-# Ordenação temporal global garantida para a cronologia do dump
 df = df.sort_values("Data_Hora").reset_index(drop=True)
-
-# Cria identificador para a comparação (Algoritmo + Fluxo)
 df["Opcao_Comp"] = df["Algoritmo_CA"].astype(str) + " (" + df["Conexao"] + ")"
 
-# Interface em abas do Streamlit
 tab1, tab2 = st.tabs(["📊 Análise por Conexão", "🔄 Comparação entre Algoritmos"])
 
-# Checkbox global para otimização de renderização
-show_only_changes = st.sidebar.checkbox("Mostrar apenas mudanças relevantes", value=True)
-
-# ---------------------------------------------------------
-# ABA 1: GRÁFICOS INDIVIDUAIS POR CONEXÃO (1, 2 e 3)
-# ---------------------------------------------------------
 with tab1:
     connections = sorted(df["Conexao"].unique())
     if not connections:
-        st.warning("Nenhuma conexão TCP no estado ESTABLISHED encontrada no CSV.")
+        st.warning("Nenhuma conexão TCP encontrada no CSV.")
     else:
         selected_connection = st.selectbox("Selecione a conexão TCP para detalhar:", connections)
         
         filtered = df[df["Conexao"] == selected_connection].copy()
         filtered = filtered.sort_values("Data_Hora").reset_index(drop=True)
-        
-        # Tempo relativo em milissegundos (O zero absoluto agora é o início do ESTABLISHED)
         filtered["Tempo_ms"] = (filtered["Data_Hora"] - filtered["Data_Hora"].min()).dt.total_seconds() * 1000
         
         plot_df = filtered.copy()
-        if show_only_changes:
-            plot_df = plot_df.loc[
-                (plot_df["CWND"].shift() != plot_df["CWND"]) |
-                (plot_df["SSThresh"].shift() != plot_df["SSThresh"]) |
-                (plot_df["SRTT_us"].shift() != plot_df["SRTT_us"]) |
-                (plot_df["Retransmissions"].shift() != plot_df["Retransmissions"])
-            ].copy()
-            
-        st.subheader("1. Janela de Congestionamento (CWND) e SSThresh × Tempo")
+
+        # Grafico CWND e SSThresh × Tempo
+        st.subheader("CWND e SSThresh × Tempo")
         fig_cwnd, ax_cwnd = plt.subplots(figsize=(14, 4))
         ax_cwnd.plot(plot_df["Tempo_ms"], plot_df["CWND"], linewidth=2, label="CWND", color="#1f77b4")
-        
         ssthresh_plot = plot_df.dropna(subset=["SSThresh"])
         if not ssthresh_plot.empty:
             ax_cwnd.plot(ssthresh_plot["Tempo_ms"], ssthresh_plot["SSThresh"], linewidth=2, color="#ff7f0e", label="SSThresh")
-            
         ax_cwnd.set_xlabel("Tempo (ms)")
         ax_cwnd.set_ylabel("Segmentos TCP")
         ax_cwnd.grid(True, alpha=0.3)
         ax_cwnd.legend()
         st.pyplot(fig_cwnd)
-        
-        st.subheader("2. RTT (SRTT_us) × Tempo")
+
+        # Gráfico SRTT x Tempo
+        st.subheader("SRTT × Tempo")
         fig_rtt, ax_rtt = plt.subplots(figsize=(14, 4))
-        ax_rtt.plot(plot_df["Tempo_ms"], plot_df["SRTT_us"], marker="o", color="#2ca02c", linewidth=2, markersize=5, label="Smooth RTT")
+        ax_rtt.plot(plot_df["Tempo_ms"], plot_df["SRTT_us"], marker="o", color="#2ca02c", linewidth=2, markersize=5, label="RTT")
         ax_rtt.set_xlabel("Tempo (ms)")
         ax_rtt.set_ylabel("RTT (µs)")
         ax_rtt.grid(True, alpha=0.3)
         ax_rtt.legend()
         st.pyplot(fig_rtt)
-        
-        st.subheader("3. Retransmissões Acumuladas × Tempo")
+
+        # Gráfico Retransmissions x Tempo
+        st.subheader("Retransmissões × Tempo")
         fig_retrans, ax_retrans = plt.subplots(figsize=(14, 4))
         ax_retrans.plot(plot_df["Tempo_ms"], plot_df["Retransmissions"], marker="o", linewidth=2, markersize=5, color="#9467bd", label="Retransmissões")
         ax_retrans.set_xlabel("Tempo (ms)")
@@ -120,92 +92,96 @@ with tab1:
         ax_retrans.legend()
         st.pyplot(fig_retrans)
 
-        tabela = filtered.drop(columns=["Conexao", "Opcao_Comp"], errors="ignore").rename(
-            columns={
-                "Data_Hora": "Horario",
-                "CWND": "CWND",
-                "SSThresh": "SSThresh",
-                "SRTT_us": "RTT",
-                "Retransmissions": "Retransmissoes",
-                "Duplicate_ACKs": "DUP_Acks",
-                "Bytes_Acked": "Bytes_Reconhecidos",
-                "Packets_Out": "Pacotes_em_Transito",
-                "Retrans_Out": "Retransmissoes em Transito",
-                "Snd_Buffer": "Send Buffer",
-                "TCP_State": "TCP_State",
-                "CA_State": "CA_State",
-                "Algoritmo_CA": "CA_Algorithm",
-                "Origem": "Origem",
-                "Destino": "Destino",
-            }
-        )
-        ordem_colunas = [
-            "Horario",
-            "Origem",
-            "Destino",
-            "CWND",
-            "SSThresh",
-            "RTT",
-            "Retransmissoes",
-            "DUP_Acks",
-            "Bytes_Reconhecidos",
-            "Pacotes_em_Transito",
-            "Retransmissoes_em_Transito",
-            "Send Buffer",
-            "TCP_State",
-            "CA_State",
-            "CA_Algorithm",
-        ]
+        # Gráfico Bytes Reconhecidos x Tempo
+        st.subheader("Bytes Reconhecidos × Tempo")
+        fig_bytes, ax_bytes = plt.subplots(figsize=(14, 4))
+        ax_bytes.plot(plot_df["Tempo_ms"], plot_df["Bytes_Acked"], marker="o", linewidth=2, markersize=5, color="#8c564b", label="Bytes Reconhecidos")
+        ax_bytes.set_xlabel("Tempo (ms)")
+        ax_bytes.set_ylabel("Bytes")
+        ax_bytes.grid(True, alpha=0.3)
+        ax_bytes.legend()
+        st.pyplot(fig_bytes)
+
+        # Gráfico Pacotes em Trânsito x Tempo
+        st.subheader("Pacotes em Trânsito × Tempo")
+        fig_packets, ax_packets = plt.subplots(figsize=(14, 4))
+        ax_packets.plot(plot_df["Tempo_ms"], plot_df["Packets_Out"], marker="o", linewidth=2, markersize=5, color="#17becf", label="Pacotes em Trânsito")
+        ax_packets.set_xlabel("Tempo (ms)")
+        ax_packets.set_ylabel("Pacotes")
+        ax_packets.grid(True, alpha=0.3)
+        ax_packets.legend()
+        st.pyplot(fig_packets)
+
+        # Gráfico Retransmissões em Trânsito x Tempo
+        st.subheader("Retransmissões em Trânsito × Tempo")
+        fig_retrans_out, ax_retrans_out = plt.subplots(figsize=(14, 4))
+        ax_retrans_out.plot(plot_df["Tempo_ms"], plot_df["Retrans_Out"], marker="o", linewidth=2, markersize=5, color="#d62728", label="Retransmissões em Trânsito")
+        ax_retrans_out.set_xlabel("Tempo (ms)")
+        ax_retrans_out.set_ylabel("Pacotes")
+        ax_retrans_out.grid(True, alpha=0.3)
+        ax_retrans_out.legend()
+        st.pyplot(fig_retrans_out)
+
+        # Gráfico Send Buffer x Tempo
+        st.subheader("Send Buffer × Tempo")
+        fig_buffer, ax_buffer = plt.subplots(figsize=(14, 4))
+        ax_buffer.plot(plot_df["Tempo_ms"], plot_df["Snd_Buffer"], marker="o", linewidth=2, markersize=5, color="#7f7f7f", label="Send Buffer")
+        ax_buffer.set_xlabel("Tempo (ms)")
+        ax_buffer.set_ylabel("Bytes")
+        ax_buffer.grid(True, alpha=0.3)
+        ax_buffer.legend()
+        st.pyplot(fig_buffer)
+
+        tabela = filtered.drop(columns=["Conexao", "Opcao_Comp"], errors="ignore").rename(columns={
+            "Data_Hora": "Horário",
+            "Origem": "Origem",
+            "Destino": "Destino",
+            "CWND": "Janela de Congestionamento",
+            "SSThresh": "Limiar de Congestionamento",
+            "SRTT_us": "RTT suavizado",
+            "Retransmissions": "Retransmissões",
+            "Duplicate_ACKs": "Acks duplicados",
+            "Bytes_Acked": "Bytes reconhecidos",
+            "Packets_Out": "Pacotes em trânsito",
+            "Retrans_Out": "Retransmissões em trânsito",
+            "Snd_Buffer": "Buffer de envio",
+            "TCP_State": "Estado TCP",
+            "CA_State": "Estado de Controle de Congestionamento",
+            "Algoritmo_CA": "Algoritmo de Controle de Congestionamento",
+        })
+
+        ordem_colunas = ["Horário", "Origem", "Destino", "Janela de Congestionamento",
+                        "Limiar de Congestionamento", "RTT suavizado", "Retransmissões",
+                        "Acks duplicados", "Bytes reconhecidos", "Pacotes em trânsito",
+                        "Retransmissões em trânsito", "Buffer de envio", "Estado TCP",
+                        "Estado de Controle de Congestionamento",
+                        "Algoritmo de Controle de Congestionamento"]
+        
         tabela = tabela[[col for col in ordem_colunas if col in tabela.columns]]
 
         st.dataframe(tabela)
 
-# ---------------------------------------------------------
-# ABA 2: COMPARAÇÃO ENTRE ALGORITMOS
-# ---------------------------------------------------------
 with tab2:
-    st.subheader("4. Gráfico Comparativo: Algoritmos na Mesma Linha do Tempo")
+    st.subheader("Gráfico Comparativo: Algoritmos na Mesma Linha do Tempo")
     opcoes_disponiveis = sorted(df["Opcao_Comp"].unique())
     
     if len(opcoes_disponiveis) == 0:
-        st.info("Gere tráfego usando algoritmos diferentes para realizar a comparação.")
+        st.info("Gere tráfego para realizar a comparação.")
     else:
         selecionados = st.multiselect(
             "Selecione os fluxos/algoritmos para sobrepor no gráfico:",
             opcoes_disponiveis,
-            default=opcoes_disponiveis[:4] if len(opcoes_disponiveis) >= 4 else opcoes_disponiveis
+            default=[]
         )
         
         if selecionados:
             fig_comp, ax_comp = plt.subplots(figsize=(14, 6))
             
             for opcao in selecionados:
-                # 1. Isola e ordena cronologicamente os dados desta conexão
                 df_comp = df[df["Opcao_Comp"] == opcao].copy()
                 df_comp = df_comp.sort_values("Data_Hora").reset_index(drop=True)
-                
-                # 2. Calcula o tempo relativo (idêntico à Aba 1)
                 df_comp["Tempo_ms"] = (df_comp["Data_Hora"] - df_comp["Data_Hora"].min()).dt.total_seconds() * 1000
-                
-                # 3. CORREÇÃO CRÍTICA: Filtro de mudanças idêntico ao da Aba 1
-                # Se filtrarmos menos colunas, os pontos de tempo colapsam e deformam o gráfico
-                if show_only_changes:
-                    df_comp = df_comp.loc[
-                        (df_comp["CWND"].shift() != df_comp["CWND"]) |
-                        (df_comp["SSThresh"].shift() != df_comp["SSThresh"]) |
-                        (df_comp["SRTT_us"].shift() != df_comp["SRTT_us"]) |
-                        (df_comp["Retransmissions"].shift() != df_comp["Retransmissions"])
-                    ].copy()
-                
-                # 4. Plota a linha com os mesmos exatos pontos da Aba 1
-                ax_comp.plot(
-                    df_comp["Tempo_ms"], 
-                    df_comp["CWND"], 
-                    label=opcao, 
-                    linewidth=2.5,
-                    marker="o",
-                    markersize=4
-                )
+                ax_comp.plot(df_comp["Tempo_ms"], df_comp["CWND"], label=opcao, linewidth=2.5,marker="o",markersize=4)
                 
             ax_comp.set_xlabel("Tempo Relativo desde o início da conexão (ms)")
             ax_comp.set_ylabel("Janela de Congestionamento (CWND) em Segmentos")
