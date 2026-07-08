@@ -113,6 +113,34 @@ static __always_inline void emit_tcp_event(struct flow_key *key, struct tcp_metr
     bpf_ringbuf_submit(event, 0);
 }
 
+SEC("tracepoint/tcp/tcp_probe")
+int handle_tcp_probe(struct trace_event_raw_tcp_probe *ctx)
+{
+    if (ctx->family != AF_INET) 
+        return 0;
+
+    struct sock *sk = (struct sock *)ctx->skaddr;
+    if (!sk) return 0;
+
+    struct flow_key key = {};
+    extract_flow_key(sk, &key);
+
+    struct tcp_metrics *metrics = get_or_create_metrics(&key);
+    if (!metrics) return 0;
+
+    struct tcp_sock *tp = (struct tcp_sock *)sk;
+    struct inet_connection_sock *icsk = (struct inet_connection_sock *)sk;
+
+    update_tcp_metrics(tp, sk, icsk, metrics);
+    metrics->snd_cwnd = ctx->snd_cwnd;
+    metrics->ssthresh = ctx->ssthresh;
+    metrics->srtt = ctx->srtt; 
+
+    emit_tcp_event(&key, metrics);
+
+    return 0;
+}
+
 SEC("fexit/tcp_ack")
 int BPF_PROG(handle_tcp_ack_exit, struct sock *sk, struct sk_buff *skb, int flag, int ret)
 {

@@ -82,7 +82,13 @@ func main() {
 	}
 	defer linkRetrans.Close()
 
-	fmt.Println("Hooks anexados: fexit/tcp_ack, fentry/tcp_fastretrans_alert, tracepoint sock/inet_sock_set_state, kprobe tcp_set_ca_state, tracepoint tcp_retransmit_skb")
+	linkProbe, err := link.Tracepoint("tcp", "tcp_probe", objs.HandleTcpProbe, nil)
+    if err != nil {
+        log.Fatalf("Falha ao anexar tracepoint tcp/tcp_probe: %v", err)
+    }
+    defer linkProbe.Close()
+
+	fmt.Println("Hooks anexados: fexit/tcp_ack, fentry/tcp_fastretrans_alert, tracepoint sock/inet_sock_set_state, kprobe tcp_set_ca_state, tracepoint tcp_retransmit_skb, tracepoint tcp/tcp_probe")
 
 	rd, err := ringbuf.NewReader(objs.TcpEvents)
 	if err != nil {
