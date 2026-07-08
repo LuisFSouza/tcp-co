@@ -7,7 +7,6 @@
 #include <bpf/bpf_endian.h>
 
 #define AF_INET 2
-#define TCP_CLOSE 7
 
 char LICENSE[] SEC("license") = "GPL";
 
