@@ -11,6 +11,7 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+// Chave da conexão TCP
 struct flow_key {
     __u32 src_ip;
     __u32 dst_ip;
@@ -18,6 +19,7 @@ struct flow_key {
     __u16 dst_port;
 } __attribute__((packed));
 
+// Metricas da conexão TCP
 struct tcp_metrics {
     __u32 snd_cwnd;
     __u32 ssthresh;
@@ -36,6 +38,7 @@ struct tcp_metrics {
     __u64 timestamp_ns;
 } __attribute__((packed));
 
+// Mapa de conexões TCP
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65535);
@@ -43,6 +46,7 @@ struct {
     __type(value, struct tcp_metrics);
 } tcp_connections SEC(".maps");
 
+// Estrutura de evento TCP para envio ao user space
 typedef struct tcp_event {
     struct flow_key key;
     struct tcp_metrics metrics;
@@ -71,7 +75,7 @@ static __always_inline void extract_ca_name(struct inet_connection_sock *icsk, c
     }
 }
 
-// Atualiza as métricas gerais do TCP DIRETAMENTE no ponteiro do mapa
+// Atualiza as métricas da conexão TCP
 static __always_inline void update_tcp_metrics(struct tcp_sock *tp, struct sock *sk, struct inet_connection_sock *icsk, struct tcp_metrics *metrics) {
     metrics->snd_cwnd = BPF_CORE_READ(tp, snd_cwnd);
     metrics->ssthresh = BPF_CORE_READ(tp, snd_ssthresh);
@@ -87,6 +91,7 @@ static __always_inline void update_tcp_metrics(struct tcp_sock *tp, struct sock 
     extract_ca_name(icsk, metrics->ca_name);
 }
 
+// Recupera ou cria métricas para a conexão TCP
 static __always_inline struct tcp_metrics *get_or_create_metrics(struct flow_key *key) {
     struct tcp_metrics *metrics = bpf_map_lookup_elem(&tcp_connections, key);
     if (!metrics) {
@@ -114,7 +119,6 @@ int BPF_PROG(handle_tcp_ack_exit, struct sock *sk, struct sk_buff *skb, int flag
 {
     if (!sk) return 0;
     
-    // Filtra apenas IPv4
     if (BPF_CORE_READ(sk, __sk_common.skc_family) != AF_INET) 
         return 0;
 
@@ -128,6 +132,7 @@ int BPF_PROG(handle_tcp_ack_exit, struct sock *sk, struct sk_buff *skb, int flag
     struct inet_connection_sock *icsk = (struct inet_connection_sock *)sk;
 
     update_tcp_metrics(tp, sk, icsk, metrics);
+
     emit_tcp_event(&key, metrics);
 
     return 0;
@@ -159,7 +164,8 @@ int BPF_PROG(handle_fastretrans_alert, struct sock *sk, __u32 prior_snd_una,
 SEC("tracepoint/sock/inet_sock_set_state")
 int handle_tcp_state_change(struct trace_event_raw_inet_sock_set_state *ctx)
 {
-    if (ctx->protocol != 6) return 0; // Protocolo TCP
+    if (ctx->protocol != 6) return 0;
+    if (ctx->family != AF_INET) return 0;
 
     struct sock *sk = (struct sock *)ctx->skaddr;
     if (!sk) return 0;
@@ -177,6 +183,7 @@ int handle_tcp_state_change(struct trace_event_raw_inet_sock_set_state *ctx)
     metrics->tcp_state = ctx->newstate;
 
     emit_tcp_event(&key, metrics);
+
     return 0;
 }
 
@@ -184,6 +191,9 @@ SEC("kprobe/tcp_set_ca_state")
 int BPF_KPROBE(trace_tcp_set_ca_state, struct sock *sk, const u8 ca_state)
 {
     if (!sk) return 0;
+
+    if (BPF_CORE_READ(sk, __sk_common.skc_family) != AF_INET)
+        return 0;
 
     struct flow_key key = {};
     extract_flow_key(sk, &key);
@@ -198,6 +208,7 @@ int BPF_KPROBE(trace_tcp_set_ca_state, struct sock *sk, const u8 ca_state)
     metrics->ca_state = ca_state;
 
     emit_tcp_event(&key, metrics);
+
     return 0;
 }
 
@@ -207,6 +218,9 @@ int handle_tcp_retransmit_skb(struct trace_event_raw_tcp_retransmit_skb *ctx)
     struct sock *sk = (struct sock *)ctx->skaddr;
     if (!sk) return 0;
 
+    if (BPF_CORE_READ(sk, __sk_common.skc_family) != AF_INET)
+        return 0;
+
     struct flow_key key = {};
     extract_flow_key(sk, &key);
 
@@ -214,7 +228,9 @@ int handle_tcp_retransmit_skb(struct trace_event_raw_tcp_retransmit_skb *ctx)
     if (metrics) {
         struct tcp_sock *tp = (struct tcp_sock *)sk;
         struct inet_connection_sock *icsk = (struct inet_connection_sock *)sk;
+        
         update_tcp_metrics(tp, sk, icsk, metrics);
+        
         emit_tcp_event(&key, metrics);
     }
     return 0;
