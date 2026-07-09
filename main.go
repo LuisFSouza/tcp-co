@@ -20,7 +20,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 -type flow_key -type tcp_metrics bpf tcp_co.bpf.c
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 -go-package main -type flow_key -type tcp_metrics bpf tcp_co.bpf.c
 
 // Estrutura para armazenar os eventos de TCP recebidos do eBPF
 type tcpEvent struct {

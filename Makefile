@@ -1,6 +1,7 @@
-.PHONY: all generate build run clean
+.PHONY: all generate build build-map run run-map clean
 
 BINARY_NAME=tcp_co
+MAP_BINARY_NAME=tcp_co_map
 
 all: generate build
 
@@ -23,12 +24,18 @@ generate:
 	go generate
 
 build: generate
-	go build -o $(BINARY_NAME) .
+	go build -o $(BINARY_NAME) bpf_x86_bpfel.go main.go
+
+build-map: generate
+	go build -o $(MAP_BINARY_NAME) bpf_x86_bpfel.go main-map.go
 
 run: build
 	sudo ./$(BINARY_NAME)
 
+run-map: build-map
+	sudo ./$(MAP_BINARY_NAME)
+
 clean:
-	rm -f $(BINARY_NAME)
+	rm -f $(BINARY_NAME) $(MAP_BINARY_NAME)
 	rm -f bpf_bpfel.go bpf_bpfel.o
 	rm -f tcp_metrics.csv

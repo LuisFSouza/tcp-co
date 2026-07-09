@@ -1,17 +1,59 @@
+import os
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-CSV_FILE = "tcp_metrics.csv"
+DEFAULT_CSV = "tcp_metrics.csv"
+EXPERIMENTS_DIR = "experiments"
 
 st.set_page_config(page_title="TCP-CO Dashboard", layout="wide")
 st.title("TCP-CO — TCP Congestion Observatory")
 
-try:
-    df = pd.read_csv(CSV_FILE)
-except Exception as e:
-    st.error(f"Erro ao ler o arquivo CSV: {e}")
-    st.stop()
+# --- Data source selection ---
+data_source = st.sidebar.selectbox("Fonte de dados:", ["tcp_metrics.csv", "Experiments folder"])
+
+def load_single(csv_path):
+    try:
+        return pd.read_csv(csv_path)
+    except Exception as e:
+        st.error(f"Erro ao ler o arquivo CSV: {e}")
+        st.stop()
+
+def load_multiple_from_experiments(selected_files):
+    frames = []
+    for fname in selected_files:
+        path = os.path.join(EXPERIMENTS_DIR, fname)
+        try:
+            df_i = pd.read_csv(path)
+        except Exception as e:
+            st.error(f"Erro ao ler {path}: {e}")
+            st.stop()
+        # annotate source
+        df_i["_source_file"] = fname
+        # try to infer algorithm from filename prefix (algo_scenario.csv)
+        parts = fname.split("_")
+        if parts:
+            df_i["Algoritmo_Experimento"] = parts[0]
+        frames.append(df_i)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+if data_source == "tcp_metrics.csv":
+    df = load_single(DEFAULT_CSV)
+else:
+    files = []
+    if os.path.isdir(EXPERIMENTS_DIR):
+        files = sorted([f for f in os.listdir(EXPERIMENTS_DIR) if f.endswith('.csv')])
+    if not files:
+        st.error(f"Pasta {EXPERIMENTS_DIR} vazia ou inexistente. Gere experimentos primeiro.")
+        st.stop()
+    selected = st.sidebar.multiselect("Selecione CSVs de experiments:", files, default=files)
+    df = load_multiple_from_experiments(selected)
+
+# If loaded from experiments and Algoritmo_CA missing, try to fill from inferred name
+if "Algoritmo_CA" not in df.columns and "Algoritmo_Experimento" in df.columns:
+    df["Algoritmo_CA"] = df["Algoritmo_Experimento"]
 
 required_columns = [
     "Data_Hora", "IP_Origem", "IP_Destino", "Porta_Origem", "Porta_Destino",
