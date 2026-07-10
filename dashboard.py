@@ -1,6 +1,8 @@
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.collections import LineCollection
 
 CSV_FILE = "tcp_metrics.csv"
 
@@ -40,7 +42,6 @@ df = df[(df["Porta_Origem"] > 0) & (df["Porta_Destino"] > 0)].copy()
 df["Origem"] = df["IP_Origem"].astype(str) + ":" + df["Porta_Origem"].astype(int).astype(str)
 df["Destino"] = df["IP_Destino"].astype(str) + ":" + df["Porta_Destino"].astype(int).astype(str)
 df["Conexao"] = df["Origem"] + " → " + df["Destino"]
-df = df[df["TCP_State"] == "ESTABLISHED"].copy()
 df = df.sort_values("Data_Hora").reset_index(drop=True)
 df["Opcao_Comp"] = df["Algoritmo_CA"].astype(str) + " (" + df["Conexao"] + ")"
 
@@ -59,18 +60,49 @@ with tab1:
         
         plot_df = filtered.copy()
 
-        # Grafico CWND e SSThresh × Tempo
+        # Grafico CWND x Tempo com cores baseadas no estado de congestionamento
+        cores_ca = {
+            "Open": "#2ca02c",      # Verde (Estável)
+            "Disorder": "#9467bd",  # Roxo (Disorder)
+            "CWR": "#bcbd22",       # Amarelo (CWR)
+            "Recovery": "#e377c2",  # Rosa (Recovery)
+            "Loss": "#d62728"       # Vermelho (Loss)
+        }
+        labels_ca = {
+            "Open": "Open (Normal)",
+            "Disorder": "Disorder (ACK Duplicado)",
+            "CWR": "CWR (Redução Preventiva)",
+            "Recovery": "Recovery (Fast Retransmit)",
+            "Loss": "Loss (Timeout RTO)"
+        }
+
         st.subheader("CWND e SSThresh × Tempo")
         fig_cwnd, ax_cwnd = plt.subplots(figsize=(14, 4))
-        ax_cwnd.plot(plot_df["Tempo_ms"], plot_df["CWND"], linewidth=2, label="CWND", color="#1f77b4")
+        x = plot_df["Tempo_ms"].values
+        y = plot_df["CWND"].values
+        states = plot_df["CA_State"].fillna("Open").astype(str).values
+        points = np.array([x, y]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        segment_colors = [cores_ca.get(st, "#7f7f7f") for st in states[:-1]]
+        lc = LineCollection(segments, colors=segment_colors, linewidths=2.5)
+        ax_cwnd.add_collection(lc)
+        ax_cwnd.autoscale_view()
+        ax_cwnd.scatter(x, y, c=[cores_ca.get(st, "#7f7f7f") for st in states], s=10, zorder=3)
+
         ssthresh_plot = plot_df.dropna(subset=["SSThresh"])
         if not ssthresh_plot.empty:
             ax_cwnd.plot(ssthresh_plot["Tempo_ms"], ssthresh_plot["SSThresh"], linewidth=2, color="#ff7f0e", label="SSThresh")
+            ax_cwnd.legend(loc="upper right")
         ax_cwnd.set_xlabel("Tempo (ms)")
         ax_cwnd.set_ylabel("Segmentos TCP")
         ax_cwnd.grid(True, alpha=0.3)
-        ax_cwnd.legend()
         st.pyplot(fig_cwnd)
+
+        st.markdown("**Legenda de Cores da Janela (CWND) pelo Estado de Congestionamento (CA State):**")
+        cols_legenda = st.columns(5)
+        for idx, (cod, cor) in enumerate(cores_ca.items()):
+            with cols_legenda[idx]:
+                st.markdown(f"<span style='color:{cor}; font-weight:bold;'>■</span> {labels_ca[cod]}", unsafe_allow_html=True)
 
         # Gráfico SRTT x Tempo
         st.subheader("SRTT × Tempo")
@@ -160,6 +192,76 @@ with tab1:
         tabela = tabela[[col for col in ordem_colunas if col in tabela.columns]]
 
         st.dataframe(tabela)
+        
+        st.subheader("Linha do Tempo de Transições de Estados TCP")
+
+        try:
+            filtered["Estado_Mudou"] = filtered["TCP_State"] != filtered["TCP_State"].shift(1)
+            df_changes = filtered[filtered["Estado_Mudou"]].copy().reset_index(drop=True)
+            
+            df_changes["Fim_ms"] = df_changes["Tempo_ms"].shift(-1)
+            df_changes["Fim_ms"] = df_changes["Fim_ms"].fillna(filtered["Tempo_ms"].max())
+            df_changes["Duracao_ms"] = df_changes["Fim_ms"] - df_changes["Tempo_ms"]
+            
+            total_estados = len(df_changes)
+            
+            largura_bloco_fixo = 1.0
+            
+            fig_timeline, ax_timeline = plt.subplots(figsize=(14, 3.5))
+            
+            cores_estados = {
+                "ESTABLISHED": "#2ca02c",
+                "SYN_SENT": "#1f77b4",
+                "SYN_RECV": "#aec7e8",
+                "FIN_WAIT1": "#ff7f0e",
+                "FIN_WAIT2": "#ffbb78",
+                "TIME_WAIT": "#98df8a",
+                "CLOSE": "#d62728",
+                "CLOSE_WAIT": "#ff9896",
+                "LAST_ACK": "#9467bd",
+                "CLOSING": "#c5b0d5",
+                "LISTEN": "#17becf",
+                "NEW_SYN_RECV": "#bcbd22"
+            }
+
+            for i, row in df_changes.iterrows():
+                estado = str(row["TCP_State"])
+                cor = cores_estados.get(estado, "#7f7f7f")
+                
+                ax_timeline.barh(y=0, width=largura_bloco_fixo, left=i, 
+                                 color=cor, edgecolor="black", height=0.5, label=estado)
+                
+                ax_timeline.text(i + 0.5, 0.08, estado, ha="center", va="center", 
+                                 color="white", fontweight="bold", fontsize=10)
+                
+                ax_timeline.text(i + 0.5, -0.08, f"{int(row['Tempo_ms'])} ms", ha="center", va="center", 
+                                 color="white", fontsize=8, style="italic")
+
+            ax_timeline.set_title("Diagrama de Sequência e Transição de Estados TCP", fontsize=12, pad=35)
+            ax_timeline.set_yticks([])
+            ax_timeline.set_xticks([])
+            ax_timeline.set_ylim(-0.5, 0.5)
+            ax_timeline.set_xlim(-0.2, total_estados + 0.2)
+            
+            handles, labels = ax_timeline.get_legend_handles_labels()
+            by_label = dict(zip(labels, handles))
+            
+            ax_timeline.legend(by_label.values(), by_label.keys(), 
+                               loc='lower center', 
+                               bbox_to_anchor=(0.5, 1.02), 
+                               ncol=6, 
+                               fontsize=9, 
+                               frameon=False)
+            
+            fig_timeline.tight_layout()
+            st.pyplot(fig_timeline)
+
+            st.markdown("**Sequência Temporal Provida (Fluxo de Estados):**")
+            sequencia_str = " ➔ ".join([f"`{row['TCP_State']}` ({int(row['Tempo_ms'])} ms)" for _, row in df_changes.iterrows()])
+            st.write(sequencia_str)
+
+        except Exception as e:
+            st.error(f"Erro ao processar linha do tempo de estados: {e}")
 
 with tab2:
     st.subheader("Gráfico Comparativo: Algoritmos na Mesma Linha do Tempo")
@@ -181,7 +283,7 @@ with tab2:
                 df_comp = df[df["Opcao_Comp"] == opcao].copy()
                 df_comp = df_comp.sort_values("Data_Hora").reset_index(drop=True)
                 df_comp["Tempo_ms"] = (df_comp["Data_Hora"] - df_comp["Data_Hora"].min()).dt.total_seconds() * 1000
-                ax_comp.plot(df_comp["Tempo_ms"], df_comp["CWND"], label=opcao, linewidth=2.5,marker="o",markersize=4)
+                ax_comp.plot(df_comp["Tempo_ms"], df_comp["CWND"], label=opcao, linewidth=2.5, marker="o", markersize=4)
                 
             ax_comp.set_xlabel("Tempo Relativo desde o início da conexão (ms)")
             ax_comp.set_ylabel("Janela de Congestionamento (CWND) em Segmentos")

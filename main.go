@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/smtp"
 	"os"
 	"os/signal"
 	"strconv"
@@ -30,7 +31,7 @@ type tcpEvent struct {
 
 // Estutura para guardar o último estado conhecido de cada conexão
 type tcpHistory struct {
-	lastCwnd           uint32
+	lastCwnd            uint32
 	lastRetransmissions uint32
 }
 
@@ -83,10 +84,10 @@ func main() {
 	defer linkRetrans.Close()
 
 	linkProbe, err := link.Tracepoint("tcp", "tcp_probe", objs.HandleTcpProbe, nil)
-    if err != nil {
-        log.Fatalf("Falha ao anexar tracepoint tcp/tcp_probe: %v", err)
-    }
-    defer linkProbe.Close()
+	if err != nil {
+		log.Fatalf("Falha ao anexar tracepoint tcp/tcp_probe: %v", err)
+	}
+	defer linkProbe.Close()
 
 	fmt.Println("Hooks anexados: fexit/tcp_ack, fentry/tcp_fastretrans_alert, tracepoint sock/inet_sock_set_state, kprobe tcp_set_ca_state, tracepoint tcp_retransmit_skb, tracepoint tcp/tcp_probe")
 
@@ -106,7 +107,7 @@ func main() {
 	defer writer.Flush()
 
 	headers := []string{
-		"Data_Hora","IP_Origem", "IP_Destino", "Porta_Origem",
+		"Data_Hora", "IP_Origem", "IP_Destino", "Porta_Origem",
 		"Porta_Destino", "CWND", "SSThresh", "SRTT_us", "Retransmissions",
 		"Duplicate_ACKs", "Bytes_Acked", "Packets_Out", "Retrans_Out",
 		"Snd_Buffer", "TCP_State", "CA_State", "Algoritmo_CA",
@@ -181,6 +182,9 @@ func main() {
 					fmt.Printf("Conexão: %s\n", connKey)
 					fmt.Printf("CWND: %d -> %d (Queda de %.2f%%)\n", history.lastCwnd, currentCwnd, drop*100)
 					fmt.Printf("Retransmissões: %d -> %d\n\n", history.lastRetransmissions, currentRetrans)
+
+					// Notificação via email
+					sendEmailAlert(connKey, history.lastCwnd, currentCwnd, drop, history.lastRetransmissions, currentRetrans)
 				}
 			}
 		}
@@ -339,4 +343,38 @@ func parseCAState(state uint8) string {
 	default:
 		return fmt.Sprintf("UNKNOWN(%d)", state)
 	}
+}
+
+func sendEmailAlert(connKey string, lastCwnd, currentCwnd uint32, drop float64, lastRetrans, currentRetrans uint32) {
+	smtpHost := "127.0.0.1"
+	smtpPort := "1025"
+
+	from := "ebpf-monitor@network.local"
+	to := []string{"exemplo-email@network.local"}
+	subject := "Subject: ⚠️ Degradação de Performance TCP\n"
+	mime := "MIME-version: 1.0;\nContent-Type: text/html; charset=\"UTF-8\";\n\n"
+
+	body := fmt.Sprintf(`
+		<div style="font-family: sans-serif; padding: 15px; border: 1px solid #ddd; border-radius: 5px;">
+			<h2 style="color: #d9534f; margin-top: 0;">Degradação de Performance Detectada</h2>
+			<p>O monitoramento eBPF identificou um comportamento anômalo na rede.</p>
+			<hr style="border: 0; border-top: 1px solid #eee;">
+			<p><strong>Conexão Afetada:</strong> <code style="background: #f4f4f4; padding: 2px 5px; border-radius: 3px;">%s</code></p>
+			<ul>
+				<li><strong>Janela de Congestionamento (CWND):</strong> de %d para %d (<span style="color: #d9534f; font-weight: bold;">Queda de %.2f%%</span>)</li>
+				<li><strong>Retransmissões no Intervalo:</strong> de %d para %d</li>
+			</ul>
+			<br>
+			<small style="color: #777;">Alerta gerado via monitoramento eBPF.</small>
+		</div>
+	`, connKey, lastCwnd, currentCwnd, drop*100, lastRetrans, currentRetrans)
+
+	msg := []byte(subject + mime + body)
+
+	err := smtp.SendMail(smtpHost+":"+smtpPort, nil, from, to, msg)
+	if err != nil {
+		log.Printf("Falha ao disparar e-mail de alerta: %v", err)
+		return
+	}
+	log.Println("Notificação de alerta enviada para a caixa de testes SMTP local.")
 }
