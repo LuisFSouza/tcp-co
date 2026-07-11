@@ -1,14 +1,41 @@
+# TCP-CO — TCP Congestion Observatory
+
+Ferramenta em Go + eBPF para observar em tempo real o controle de congestionamento do TCP no kernel Linux (CWND, ssthresh, RTT, retransmissões, etc.), gravando os dados em CSV.
+
+## Pré-requisitos
+
+```bash
 sudo apt update
-sudo apt install -y clang llvm make libbpf-dev linux-headers-generic gcc-multilib
+sudo apt install -y clang llvm make libbpf-dev linux-headers-generic gcc-multilib linux-tools-generic
+sudo apt install -y iperf3 iproute2
+```
 
-go mod init tcp-co
-GOPROXY=direct go get github.com/cilium/ebpf/rlimit
-GOPROXY=direct go mod tidy
+- Go 1.25+
+- Kernel com suporte a BTF (verifique com `ls /sys/kernel/btf/vmlinux`)
 
-sudo apt install -y linux-tools-generic
-find /usr/lib/linux-tools -name bpftool 2>/dev/null
+## Compilação
 
-resultado do find btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+O `Makefile` já cuida de tudo (`go mod tidy`, geração do `vmlinux.h`, `go generate` e `go build`):
 
- go generate
-go build -o tcp-co
+```bash
+make
+```
+
+## Testes simulados
+
+O `test_scenarios.sh` já executa o `tcp_co` internamente para cada cenário (perda de pacotes, delay, comparação Reno/Cubic/BBR) — não é preciso rodar `./tcp_co` manualmente. Leva de 15 a 20 minutos e requer `sudo`:
+
+```bash
+sudo bash test_scenarios.sh
+```
+
+Os resultados (CSVs por cenário) são salvos em `test_results/`.
+
+## Dashboard (Streamlit)
+
+```bash
+pip install streamlit pandas matplotlib numpy
+streamlit run dashboard.py
+```
+
+Lê os CSVs em `test_results/` e mostra gráficos comparativos por algoritmo/cenário.
