@@ -163,7 +163,36 @@ with tab1:
         ax_buffer.grid(True, alpha=0.3)
         ax_buffer.legend()
         st.pyplot(fig_buffer)
+        
+        # Gráfico Throughput x Tempo
+        st.subheader("Throughput × Tempo")
 
+        try:
+            df_thr_calc = plot_df[['Data_Hora', 'Bytes_Acked']].copy()
+            df_thr_calc.set_index('Data_Hora', inplace=True)
+            df_thr_calc['Bytes_Novos'] = df_thr_calc['Bytes_Acked'].diff().fillna(0)
+            
+            df_resampled = df_thr_calc['Bytes_Novos'].resample('1s').sum().to_frame()
+
+            duracao_janela_segundos = 1.0
+            
+            df_resampled['Throughput_Mbps'] = (df_resampled['Bytes_Novos'] * 8) / (duracao_janela_segundos * 1_000_000)
+            
+            df_resampled['Tempo_ms'] = (df_resampled.index - df_resampled.index.min()).total_seconds() * 1000
+
+            fig_thr, ax_thr = plt.subplots(figsize=(14, 4))
+            ax_thr.plot(df_resampled["Tempo_ms"], df_resampled["Throughput_Mbps"], 
+                        linewidth=2, color="#1f77b4", marker='o', label="Vazão (Janela de 1s)")
+            
+            ax_thr.set_xlabel("Tempo (ms)")
+            ax_thr.set_ylabel("Vazão (Mbps)")
+            ax_thr.grid(True, alpha=0.3, linestyle="--")
+            ax_thr.legend()
+            
+            st.pyplot(fig_thr)
+
+        except Exception as e:
+            st.error(f"Erro ao calcular Throughput por segundo: {e}")
         tabela = filtered.drop(columns=["Conexao", "Opcao_Comp"], errors="ignore").rename(columns={
             "Data_Hora": "Horário",
             "Origem": "Origem",
@@ -271,26 +300,88 @@ with tab2:
         st.info("Gere tráfego para realizar a comparação.")
     else:
         selecionados = st.multiselect(
-            "Selecione os fluxos/algoritmos para sobrepor no gráfico:",
+            "Selecione os fluxos/algoritmos para sobrepor nos gráficos:",
             opcoes_disponiveis,
             default=[]
         )
         
         if selecionados:
-            fig_comp, ax_comp = plt.subplots(figsize=(14, 7)) 
-            
+            dados_fluxos = {}
+            dados_throughput = {}
+
             for opcao in selecionados:
                 df_comp = df[df["Opcao_Comp"] == opcao].copy()
                 df_comp = df_comp.sort_values("Data_Hora").reset_index(drop=True)
                 df_comp["Tempo_ms"] = (df_comp["Data_Hora"] - df_comp["Data_Hora"].min()).dt.total_seconds() * 1000
-                ax_comp.plot(df_comp["Tempo_ms"], df_comp["CWND"], label=opcao, linewidth=1.2) 
-                
-            ax_comp.set_xlabel("Tempo Relativo desde o início da conexão (ms)")
-            ax_comp.set_ylabel("Janela de Congestionamento (CWND) em Segmentos")
-            ax_comp.set_title("Comparação de Algoritmos de Controle de Congestionamento")
-            ax_comp.grid(True, alpha=0.3, linestyle="--")
-            ax_comp.legend()
-            
-            st.pyplot(fig_comp)
+                dados_fluxos[opcao] = df_comp
+
+                try:
+                    df_thr_calc = df_comp[['Data_Hora', 'Bytes_Acked']].copy()
+                    df_thr_calc.set_index('Data_Hora', inplace=True)
+                    df_thr_calc['Bytes_Novos'] = df_thr_calc['Bytes_Acked'].diff().fillna(0)
+                    
+                    df_resampled = df_thr_calc['Bytes_Novos'].resample('1s').sum().to_frame()
+                    duracao_janela_segundos = 1.0
+                    df_resampled['Throughput_Mbps'] = (df_resampled['Bytes_Novos'] * 8) / (duracao_janela_segundos * 1_000_000)
+                    df_resampled['Tempo_ms'] = (df_resampled.index - df_resampled.index.min()).total_seconds() * 1000
+                    
+                    dados_throughput[opcao] = df_resampled
+                except Exception as e:
+                    dados_throughput[opcao] = None
+
+            # 1. Comparativo de CWND
+            st.markdown("### Comparação de Janela de Congestionamento (CWND)")
+            fig_comp_cwnd, ax_comp_cwnd = plt.subplots(figsize=(14, 5))
+            for opcao in selecionados:
+                df_c = dados_fluxos[opcao]
+                ax_comp_cwnd.plot(df_c["Tempo_ms"], df_c["CWND"], label=opcao, linewidth=1.2)
+            ax_comp_cwnd.set_xlabel("Tempo (ms)")
+            ax_comp_cwnd.set_ylabel("Janela de Congestionamento (CWND) em Segmentos")
+            ax_comp_cwnd.grid(True, alpha=0.3, linestyle="--")
+            ax_comp_cwnd.legend()
+            st.pyplot(fig_comp_cwnd)
+
+            # 2. Comparativo de RTT
+            st.markdown("### Comparação de RTT (SRTT)")
+            fig_comp_rtt, ax_comp_rtt = plt.subplots(figsize=(14, 5))
+            for opcao in selecionados:
+                df_c = dados_fluxos[opcao]
+                ax_comp_rtt.plot(df_c["Tempo_ms"], df_c["SRTT_us"], label=opcao, linewidth=1.2)
+            ax_comp_rtt.set_xlabel("Tempo (ms)")
+            ax_comp_rtt.set_ylabel("RTT (µs)")
+            ax_comp_rtt.grid(True, alpha=0.3, linestyle="--")
+            ax_comp_rtt.legend()
+            st.pyplot(fig_comp_rtt)
+
+            # 3. Comparativo de Throughput
+            st.markdown("### Comparação de Throughput (Vazão)")
+            fig_comp_thr, ax_comp_thr = plt.subplots(figsize=(14, 5))
+            erro_thr = False
+            for opcao in selecionados:
+                df_t = dados_throughput.get(opcao)
+                if df_t is not None and not df_t.empty:
+                    ax_comp_thr.plot(df_t["Tempo_ms"], df_t["Throughput_Mbps"], label=opcao, linewidth=2, marker='o')
+                else:
+                    erro_thr = True
+            if erro_thr:
+                st.warning("Não foi possível calcular o Throughput para uma ou mais conexões nesta janela temporal.")
+            ax_comp_thr.set_xlabel("Tempo (ms)")
+            ax_comp_thr.set_ylabel("Vazão (Mbps)")
+            ax_comp_thr.grid(True, alpha=0.3, linestyle="--")
+            ax_comp_thr.legend()
+            st.pyplot(fig_comp_thr)
+
+            # 4. Comparativo de Retransmissões
+            st.markdown("### Comparação de Retransmissões Totais")
+            fig_comp_ret, ax_comp_ret = plt.subplots(figsize=(14, 5))
+            for opcao in selecionados:
+                df_c = dados_fluxos[opcao]
+                ax_comp_ret.plot(df_c["Tempo_ms"], df_c["Retransmissions"], label=opcao, linewidth=1.2)
+            ax_comp_ret.set_xlabel("Tempo (ms)")
+            ax_comp_ret.set_ylabel("Total de Pacotes Retransmitidos")
+            ax_comp_ret.grid(True, alpha=0.3, linestyle="--")
+            ax_comp_ret.legend()
+            st.pyplot(fig_comp_ret)
+
         else:
-            st.info("Selecione uma ou mais conexões acima para gerar o gráfico comparativo.")
+            st.info("Selecione uma ou mais conexões acima para gerar os gráficos comparativos.")
