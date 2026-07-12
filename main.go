@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/smtp"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -39,6 +41,13 @@ type tcpHistory struct {
 const dropPercentage = 0.50
 
 func main() {
+	outputPath := flag.String("o", "tcp_metrics.csv", "Caminho do arquivo CSV de saída")
+	durationSec := flag.Int("duration", 0, "Encerra automaticamente após N segundos (0 = roda até Ctrl+C)")
+	intervalMs := flag.Int("interval", 50, "Intervalo mínimo em ms entre amostras gravadas no CSV por conexão (0 = grava tudo, sem limite)")
+	flag.Parse()
+
+	sampleInterval := time.Duration(*intervalMs) * time.Millisecond
+
 	if err := rlimit.RemoveMemlock(); err != nil {
 		log.Fatalf("Falha ao remover memlock rlimit: %v", err)
 	}
@@ -97,7 +106,13 @@ func main() {
 	}
 	defer rd.Close()
 
-	csvFile, err := os.Create("tcp_metrics.csv")
+	if dir := filepath.Dir(*outputPath); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			log.Fatalf("Falha ao criar diretório de saída %s: %v", dir, err)
+		}
+	}
+
+	csvFile, err := os.Create(*outputPath)
 	if err != nil {
 		log.Fatalf("Falha ao criar CSV: %v", err)
 	}
@@ -132,21 +147,36 @@ func main() {
 		loc = time.Local
 	}
 
-	fmt.Println("📊 Gravando histórico em tcp_metrics.csv")
+	fmt.Printf("📊 Gravando histórico em %s\n", *outputPath)
+	intervalNs := uint64(sampleInterval.Nanoseconds())
+	if intervalNs > 0 {
+		fmt.Printf("⏱️  Intervalo mínimo entre amostras por conexão: %dms\n", *intervalMs)
+	} else {
+		fmt.Println("⏱️  Throttling desativado (gravando todos os eventos, CSV pode ficar grande)")
+	}
 	fmt.Println("Pressione Ctrl+C para encerrar.")
 
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
 
+	if *durationSec > 0 {
+		go func() {
+			time.Sleep(time.Duration(*durationSec) * time.Second)
+			stopChan <- syscall.SIGTERM
+		}()
+	}
+
 	go func() {
 		<-stopChan
-		fmt.Println("\n💾 Finalizando tcp_metrics.csv...")
+		fmt.Printf("\n💾 Finalizando %s...\n", *outputPath)
 		rd.Close()
 	}()
 
 	// Mapa para armazenar o último estado conhecido de cada conexão TCP
 	historyMap := make(map[string]tcpHistory)
+	lastWrittenNs := make(map[string]uint64)
 	count := 0
+	skipped := 0
 
 	for {
 		record, err := rd.Read()
@@ -171,6 +201,8 @@ func main() {
 		currentRetrans := uint32(event.Metrics.Retransmissions)
 
 		// Verificação de queda de CWND com aumento de retransmissões
+		// (roda em TODO evento, independente da amostra ser gravada ou não,
+		// pra não perder detecção de anomalias por causa do throttling)
 		if history, exists := historyMap[connKey]; exists {
 			// Se as retransmissões subiram e a cwnd atual diminuiu
 			if currentRetrans > history.lastRetransmissions && currentCwnd < history.lastCwnd {
@@ -195,6 +227,17 @@ func main() {
 			lastRetransmissions: currentRetrans,
 		}
 
+		// Throttling: só grava uma amostra por conexão a cada "intervalNs".
+		// Isso reduz drasticamente o tamanho do CSV sem perder a forma da curva.
+		if intervalNs > 0 {
+			last, seen := lastWrittenNs[connKey]
+			if seen && event.Metrics.TimestampNs-last < intervalNs {
+				skipped++
+				continue
+			}
+		}
+		lastWrittenNs[connKey] = event.Metrics.TimestampNs
+
 		row := eventToCSVRow(event, bootTime, loc)
 
 		if err := writer.Write(row); err != nil {
@@ -209,10 +252,13 @@ func main() {
 		}
 
 		count++
-		fmt.Printf("Amostra %d gravada\n", count)
+		if count%20 == 0 {
+			fmt.Printf("Amostras gravadas: %d (descartadas por throttling: %d)\n", count, skipped)
+		}
 	}
 
 	writer.Flush()
+	fmt.Printf("\n✅ Total de amostras gravadas: %d | descartadas por throttling: %d\n", count, skipped)
 }
 
 func eventToCSVRow(event tcpEvent, bootTime time.Time, loc *time.Location) []string {

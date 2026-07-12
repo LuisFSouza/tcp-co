@@ -1,0 +1,28 @@
+# Binário compilado
+tcp_co
+
+# Arquivos gerados pelo bpf2go / go generate
+bpf_bpfel.go
+bpf_bpfel.o
+bpf_bpfeb.go
+bpf_bpfeb.o
+bpf_x86_bpfel.go
+bpf_x86_bpfel.o
+bpf_x86_bpfeb.go
+bpf_x86_bpfeb.o
+
+# Gerado localmente a partir do kernel de cada máquina — não faz sentido versionar
+vmlinux.h
+
+# Dados de teste / resultados dos experimentos
+tcp_metrics.csv
+results/*.csv
+
+# Dependências Go (o go.sum/go.mod ficam, só o cache não)
+/go/pkg/
+
+# Logs
+*.log
+
+# Arquivos de SO
+.DS_Store

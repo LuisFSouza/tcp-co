@@ -1,6 +1,9 @@
 .PHONY: all generate build run clean
 
 BINARY_NAME=tcp_co
+OUT ?= tcp_metrics.csv
+DURATION ?= 0
+INTERVAL ?= 50
 
 all: generate build
 
@@ -26,9 +29,10 @@ build: generate
 	go build -o $(BINARY_NAME) .
 
 run: build
-	sudo ./$(BINARY_NAME)
+	sudo ./$(BINARY_NAME) -o $(OUT) -duration $(DURATION) -interval $(INTERVAL)
 
 clean:
 	rm -f $(BINARY_NAME)
 	rm -f bpf_bpfel.go bpf_bpfel.o
 	rm -f tcp_metrics.csv
+	sudo rm -rf results
