@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 
-CSV_FILE = "tcp_metrics.csv"
+CSV_FILE = "./tcp_metrics.csv"
 
 st.set_page_config(page_title="TCP-CO Dashboard", layout="wide")
 st.title("TCP-CO — TCP Congestion Observatory")
@@ -77,21 +77,21 @@ with tab1:
         }
 
         st.subheader("CWND e SSThresh × Tempo")
-        fig_cwnd, ax_cwnd = plt.subplots(figsize=(14, 4))
+        fig_cwnd, ax_cwnd = plt.subplots(figsize=(14, 8)) 
         x = plot_df["Tempo_ms"].values
         y = plot_df["CWND"].values
         states = plot_df["CA_State"].fillna("Open").astype(str).values
         points = np.array([x, y]).T.reshape(-1, 1, 2)
         segments = np.concatenate([points[:-1], points[1:]], axis=1)
         segment_colors = [cores_ca.get(st, "#7f7f7f") for st in states[:-1]]
-        lc = LineCollection(segments, colors=segment_colors, linewidths=2.5)
+        
+        lc = LineCollection(segments, colors=segment_colors, linewidths=1.0) 
         ax_cwnd.add_collection(lc)
         ax_cwnd.autoscale_view()
-        ax_cwnd.scatter(x, y, c=[cores_ca.get(st, "#7f7f7f") for st in states], s=10, zorder=3)
 
         ssthresh_plot = plot_df.dropna(subset=["SSThresh"])
         if not ssthresh_plot.empty:
-            ax_cwnd.plot(ssthresh_plot["Tempo_ms"], ssthresh_plot["SSThresh"], linewidth=2, color="#ff7f0e", label="SSThresh")
+            ax_cwnd.plot(ssthresh_plot["Tempo_ms"], ssthresh_plot["SSThresh"], linewidth=1.2, color="#ff7f0e", label="SSThresh")
             ax_cwnd.legend(loc="upper right")
         ax_cwnd.set_xlabel("Tempo (ms)")
         ax_cwnd.set_ylabel("Segmentos TCP")
@@ -107,7 +107,7 @@ with tab1:
         # Gráfico SRTT x Tempo
         st.subheader("SRTT × Tempo")
         fig_rtt, ax_rtt = plt.subplots(figsize=(14, 4))
-        ax_rtt.plot(plot_df["Tempo_ms"], plot_df["SRTT_us"], marker="o", color="#2ca02c", linewidth=2, markersize=5, label="RTT")
+        ax_rtt.plot(plot_df["Tempo_ms"], plot_df["SRTT_us"], color="#2ca02c", linewidth=1.2, label="RTT")
         ax_rtt.set_xlabel("Tempo (ms)")
         ax_rtt.set_ylabel("RTT (µs)")
         ax_rtt.grid(True, alpha=0.3)
@@ -117,7 +117,7 @@ with tab1:
         # Gráfico Retransmissions x Tempo
         st.subheader("Retransmissões × Tempo")
         fig_retrans, ax_retrans = plt.subplots(figsize=(14, 4))
-        ax_retrans.plot(plot_df["Tempo_ms"], plot_df["Retransmissions"], marker="o", linewidth=2, markersize=5, color="#9467bd", label="Retransmissões")
+        ax_retrans.plot(plot_df["Tempo_ms"], plot_df["Retransmissions"], linewidth=1.2, color="#9467bd", label="Retransmissões")
         ax_retrans.set_xlabel("Tempo (ms)")
         ax_retrans.set_ylabel("Total de Pacotes Retransmitidos")
         ax_retrans.grid(True, alpha=0.3)
@@ -127,7 +127,7 @@ with tab1:
         # Gráfico Bytes Reconhecidos x Tempo
         st.subheader("Bytes Reconhecidos × Tempo")
         fig_bytes, ax_bytes = plt.subplots(figsize=(14, 4))
-        ax_bytes.plot(plot_df["Tempo_ms"], plot_df["Bytes_Acked"], marker="o", linewidth=2, markersize=5, color="#8c564b", label="Bytes Reconhecidos")
+        ax_bytes.plot(plot_df["Tempo_ms"], plot_df["Bytes_Acked"], linewidth=1.2, color="#8c564b", label="Bytes Reconhecidos")
         ax_bytes.set_xlabel("Tempo (ms)")
         ax_bytes.set_ylabel("Bytes")
         ax_bytes.grid(True, alpha=0.3)
@@ -137,7 +137,7 @@ with tab1:
         # Gráfico Pacotes em Trânsito x Tempo
         st.subheader("Pacotes em Trânsito × Tempo")
         fig_packets, ax_packets = plt.subplots(figsize=(14, 4))
-        ax_packets.plot(plot_df["Tempo_ms"], plot_df["Packets_Out"], marker="o", linewidth=2, markersize=5, color="#17becf", label="Pacotes em Trânsito")
+        ax_packets.plot(plot_df["Tempo_ms"], plot_df["Packets_Out"], linewidth=1.2, color="#17becf", label="Pacotes em Trânsito")
         ax_packets.set_xlabel("Tempo (ms)")
         ax_packets.set_ylabel("Pacotes")
         ax_packets.grid(True, alpha=0.3)
@@ -147,7 +147,7 @@ with tab1:
         # Gráfico Retransmissões em Trânsito x Tempo
         st.subheader("Retransmissões em Trânsito × Tempo")
         fig_retrans_out, ax_retrans_out = plt.subplots(figsize=(14, 4))
-        ax_retrans_out.plot(plot_df["Tempo_ms"], plot_df["Retrans_Out"], marker="o", linewidth=2, markersize=5, color="#d62728", label="Retransmissões em Trânsito")
+        ax_retrans_out.plot(plot_df["Tempo_ms"], plot_df["Retrans_Out"], linewidth=1.2, color="#d62728", label="Retransmissões em Trânsito")
         ax_retrans_out.set_xlabel("Tempo (ms)")
         ax_retrans_out.set_ylabel("Pacotes")
         ax_retrans_out.grid(True, alpha=0.3)
@@ -157,7 +157,7 @@ with tab1:
         # Gráfico Send Buffer x Tempo
         st.subheader("Send Buffer × Tempo")
         fig_buffer, ax_buffer = plt.subplots(figsize=(14, 4))
-        ax_buffer.plot(plot_df["Tempo_ms"], plot_df["Snd_Buffer"], marker="o", linewidth=2, markersize=5, color="#7f7f7f", label="Send Buffer")
+        ax_buffer.plot(plot_df["Tempo_ms"], plot_df["Snd_Buffer"], linewidth=1.2, color="#7f7f7f", label="Send Buffer")
         ax_buffer.set_xlabel("Tempo (ms)")
         ax_buffer.set_ylabel("Bytes")
         ax_buffer.grid(True, alpha=0.3)
@@ -277,13 +277,13 @@ with tab2:
         )
         
         if selecionados:
-            fig_comp, ax_comp = plt.subplots(figsize=(14, 6))
+            fig_comp, ax_comp = plt.subplots(figsize=(14, 7)) 
             
             for opcao in selecionados:
                 df_comp = df[df["Opcao_Comp"] == opcao].copy()
                 df_comp = df_comp.sort_values("Data_Hora").reset_index(drop=True)
                 df_comp["Tempo_ms"] = (df_comp["Data_Hora"] - df_comp["Data_Hora"].min()).dt.total_seconds() * 1000
-                ax_comp.plot(df_comp["Tempo_ms"], df_comp["CWND"], label=opcao, linewidth=2.5, marker="o", markersize=4)
+                ax_comp.plot(df_comp["Tempo_ms"], df_comp["CWND"], label=opcao, linewidth=1.2) 
                 
             ax_comp.set_xlabel("Tempo Relativo desde o início da conexão (ms)")
             ax_comp.set_ylabel("Janela de Congestionamento (CWND) em Segmentos")
