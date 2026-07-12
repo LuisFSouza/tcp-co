@@ -35,6 +35,8 @@ sudo sh < <(curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/i
 ```
 Mais informações em: [MailPit](https://github.com/axllent/mailpit)
 
+---
+
 ## ⚙️ Compilação e Execução
 
 O processo de build é totalmente automatizado via `Makefile`, que gerencia desde a extração do `vmlinux.h` até o `go generate` (via `bpf2go`) e a compilação final.
@@ -62,20 +64,6 @@ streamlit run dashboard.py
 
 ---
 
-## 🧪 Cenários de Testes Simulados
-
-O projeto acompanha um script automatizado (`test_scenarios.sh`) que aplica condições adversas de rede usando `tc` (Traffic Control) e injeta tráfego com `iperf3`.
-
-O script gerencia o ciclo de vida do `tcp_co` internamente para cada cenário (Reno vs Cubic vs BBR, perda de pacotes, introdução de delay).
-
-```bash
-sudo bash test_scenarios.sh
-```
-
-* **Saída:** Os relatórios consolidados de cada cenário serão gerados na pasta `test_results/`.
-
----
-
 ##  Simulação de Alertas com Mailpit
 
 A ferramenta possui um mecanismo interno para disparar notificações por e-mail sempre que uma degradação severa na performance do TCP for detectada.
@@ -88,6 +76,20 @@ mailpit --listen 127.0.0.1:8025
 ```
 
 #### 2. Abra o painel do Mailpit no seu navegador em [http://127.0.0.1:8025] para visualizar os e-mails recebidos em tempo real com o layout de degradação estruturado.
+
+---
+
+## 🧪 Cenários de Testes Simulados
+
+O projeto acompanha um script automatizado (`test_scenarios.sh`) que aplica condições adversas de rede usando `tc` (Traffic Control) e injeta tráfego com `iperf3`.
+
+O script gerencia o ciclo de vida do `tcp_co` internamente para cada cenário (Reno vs Cubic vs BBR, perda de pacotes, introdução de delay).
+
+```bash
+sudo bash test_scenarios.sh
+```
+
+* **Saída:** Os relatórios consolidados de cada cenário serão gerados na pasta `test_results/`.
 
 ---
 
