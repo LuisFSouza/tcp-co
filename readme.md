@@ -76,8 +76,6 @@ sudo bash test_scenarios.sh
 
 ---
 
----
-
 ##  Simulação de Alertas com Mailpit
 
 A ferramenta possui um mecanismo interno para disparar notificações por e-mail sempre que uma degradação severa na performance do TCP for detectada.
@@ -90,6 +88,8 @@ mailpit --listen 127.0.0.1:8025
 ```
 
 #### 2. Abra o painel do Mailpit no seu navegador em [http://127.0.0.1:8025] para visualizar os e-mails recebidos em tempo real com o layout de degradação estruturado.
+
+---
 
 ## 👥 Integrantes
 
