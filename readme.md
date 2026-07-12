@@ -34,7 +34,6 @@ Para testar a simulação de e-mails localmente, instale o Mailpit. No Linux, vo
 sudo sh < <(curl -sL https://raw.githubusercontent.com/axllent/mailpit/develop/install.sh)
 ```
 Mais informações em: [MailPit](https://github.com/axllent/mailpit)
----
 
 ## ⚙️ Compilação e Execução
 
