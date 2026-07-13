@@ -1,0 +1,2 @@
+sudo ip netns exec ns_server iperf3 -s1
+sudo ip netns exec ns_client iperf3 -c 10.0.0.2 -C reno -k 2000

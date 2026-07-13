@@ -1,0 +1,5 @@
+sudo ip netns exec ns_client tc qdisc del dev veth-c root
+sudo ip netns exec ns_server tc qdisc del dev veth-s root
+
+sudo ip netns exec ns_client tc qdisc add dev veth-c root netem delay 50ms
+sudo ip netns exec ns_server tc qdisc add dev veth-s root netem delay 50ms

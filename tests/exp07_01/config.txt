@@ -1,0 +1,8 @@
+sudo ip netns exec ns_client tc qdisc del dev veth-c root
+ 
+sudo ip netns exec ns_client tc qdisc add dev veth-c root handle 1: \
+    netem delay 40ms loss 0.001%
+ 
+sudo ip netns exec ns_client tc qdisc add dev veth-c parent 1:1 handle 10: \
+    tbf rate 100mbit burst 128k latency 20ms
+ 
