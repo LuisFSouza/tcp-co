@@ -1,13 +1,30 @@
+import argparse
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 
-CSV_FILE = "./tcp_metrics.csv"
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="TCP-CO Dashboard")
+    parser.add_argument(
+        "--csv",
+        dest="csv_file",
+        default="./tcp_metrics.csv",
+        help="Caminho para o arquivo CSV de métricas TCP (padrão: ./tcp_metrics.csv)",
+    )
+    # parse_known_args evita erro caso o Streamlit injete argumentos extras
+    args, _ = parser.parse_known_args()
+    return args
+
+
+args = parse_args()
+CSV_FILE = args.csv_file
 
 st.set_page_config(page_title="TCP-CO Dashboard", layout="wide")
 st.title("TCP-CO — TCP Congestion Observatory")
+st.caption(f"Arquivo carregado: `{CSV_FILE}`")
 
 try:
     df = pd.read_csv(CSV_FILE)
