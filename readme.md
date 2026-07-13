@@ -39,6 +39,14 @@ Mais informações em: [MailPit](https://github.com/axllent/mailpit)
 
 ## ⚙️ Compilação e Execução
 
+Configuração inicial antes de rodar a aplicação:
+
+```bash
+sudo ./setup.sh
+```
+
+## Setup inicial
+
 O processo de build é totalmente automatizado via `Makefile`, que gerencia desde a extração do `vmlinux.h` até o `go generate` (via `bpf2go`) e a compilação final.
 
 ### Modo Observador (Tempo Real)
@@ -59,7 +67,7 @@ Em outro terminal, instale as dependências do Python e inicie a interface de an
 
 ```bash
 pip install -r requirements.txt
-streamlit run dashboard.py
+streamlit run dashboard.py --csv tests/results/<nome_do_seu_arquivo.csv>
 ```
 
 ---
@@ -81,15 +89,15 @@ mailpit --listen 127.0.0.1:8025
 
 ## 🧪 Cenários de Testes Simulados
 
-O projeto acompanha um script automatizado (`test_scenarios.sh`) que aplica condições adversas de rede usando `tc` (Traffic Control) e injeta tráfego com `iperf3`.
+O projeto acompanha um script automatizado (`run_tests.sh`) que aplica condições adversas de rede usando `tc` (Traffic Control) e injeta tráfego com `iperf3`.
 
 O script gerencia o ciclo de vida do `tcp_co` internamente para cada cenário (Reno vs Cubic vs BBR, perda de pacotes, introdução de delay).
 
 ```bash
-sudo bash test_scenarios.sh
+sudo bash run_tests.sh
 ```
 
-* **Saída:** Os relatórios consolidados de cada cenário serão gerados na pasta `test_results/`.
+* **Saída:** Os relatórios consolidados de cada cenário serão gerados na pasta `tests/results/`.
 
 ---
 
