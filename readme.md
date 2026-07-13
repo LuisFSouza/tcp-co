@@ -39,14 +39,6 @@ Mais informações em: [MailPit](https://github.com/axllent/mailpit)
 
 ## ⚙️ Compilação e Execução
 
-Configuração inicial antes de rodar a aplicação:
-
-```bash
-sudo ./setup.sh
-```
-
-## Setup inicial
-
 O processo de build é totalmente automatizado via `Makefile`, que gerencia desde a extração do `vmlinux.h` até o `go generate` (via `bpf2go`) e a compilação final.
 
 ### Modo Observador (Tempo Real)
@@ -63,11 +55,11 @@ Por padrão, os dados coletados serão salvos continuamente no arquivo `tcp_metr
 
 ### Inicializando o Dashboard
 
-Em outro terminal, instale as dependências do Python e inicie a interface de análise:
+Em outro terminal, instale as dependências do Python e inicie a interface de análise (aponte para o arquivo `.csv` que deseja visualizar):
 
 ```bash
 pip install -r requirements.txt
-streamlit run dashboard.py --csv tests/results/<nome_do_seu_arquivo.csv>
+streamlit run dashboard.py --csv tcp_metrics.csv
 ```
 
 ---
@@ -83,7 +75,7 @@ Para interceptar e visualizar esses alertas localmente sem precisar de credencia
 mailpit --listen 127.0.0.1:8025
 ```
 
-#### 2. Abra o painel do Mailpit no seu navegador em [http://127.0.0.1:8025] para visualizar os e-mails recebidos em tempo real com o layout de degradação estruturado.
+#### 2. Abra o painel do Mailpit no seu navegador em [http://127.0.0.1:8025](http://127.0.0.1:8025) para visualizar os e-mails recebidos em tempo real com o layout de degradação estruturado.
 
 ---
 
@@ -91,13 +83,19 @@ mailpit --listen 127.0.0.1:8025
 
 O projeto acompanha um script automatizado (`run_tests.sh`) que aplica condições adversas de rede usando `tc` (Traffic Control) e injeta tráfego com `iperf3`.
 
-O script gerencia o ciclo de vida do `tcp_co` internamente para cada cenário (Reno vs Cubic vs BBR, perda de pacotes, introdução de delay).
+O script gerencia o ciclo de vida do `tcp_co` internamente para cada cenário (Reno vs Cubic, perda de pacotes, introdução de delay).
 
 ```bash
+sudo ./setup.sh
 sudo bash run_tests.sh
 ```
+📂 **Saída:** Os relatórios consolidados de cada cenário serão gerados na pasta `tests/results/`. Na hora de gerar o gráfico, especifique o caminho do arquivo `.csv` gerado pelo teste.
 
-* **Saída:** Os relatórios consolidados de cada cenário serão gerados na pasta `tests/results/`.
+**Exemplo de execução do dashboard:**
+
+```bash
+streamlit run dashboard.py --csv tests/results/exp01.csv
+```
 
 ---
 
