@@ -59,7 +59,7 @@ Em outro terminal, instale as dependências do Python e inicie a interface de an
 
 ```bash
 pip install -r requirements.txt
-streamlit run dashboard.py --csv tcp_metrics.csv
+streamlit run dashboard.py -- --csv 'tcp_metrics.csv'
 ```
 
 ---
@@ -94,7 +94,7 @@ sudo bash run_tests.sh
 **Exemplo de execução do dashboard:**
 
 ```bash
-streamlit run dashboard.py --csv tests/results/exp01.csv
+streamlit run dashboard.py -- --csv 'tests/results/exp01.csv'
 ```
 
 ---
